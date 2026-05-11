@@ -1049,3 +1049,16 @@ README 应至少包括：
 LanTalk 的第一阶段目标是：
 
 > 做出一个打开即用、自动发现、能私聊、能广播、能传文件、能保存记录、界面像 Telegram、运行轻量稳定的 C# 局域网即时通信 MVP。
+
+
+
+
+
+另外保持对未来.net11新特性的兼容预留：
+
+技术前瞻：net11-preview 
+协议设计：先用 sealed record 模拟 union type
+压缩设计：先预留 ICompressor，后续接 Zstd
+性能目标：先做好异步、流式传输、UI 虚拟化、AOT 兼容
+
+项目主线基于 .NET 10 LTS 保证稳定性，同时在架构上面向 .NET 11 的 Runtime Async、C# Union Type 和 Zstandard 做前瞻性设计，为后续高性能版本升级预留扩展空间。
