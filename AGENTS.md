@@ -1,4 +1,4 @@
-# AGENT.md
+# AGENTS.md
 
 > 本文件是 LanTalk 项目的 AI Agent / Codex 开发规范。  
 > 所有自动生成、修改、重构代码的行为都必须遵守本文档。  
