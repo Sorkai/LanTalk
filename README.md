@@ -1,0 +1,79 @@
+# LanTalk
+
+LanTalk 是一个基于 C# / .NET 10、Avalonia UI 和 SukiUI 的局域网即时通信 MVP。它面向教室、实验室、小型办公室等局域网协作场景，目标是“无需登录注册、打开即用、自动发现、能私聊、能广播、能传文件、能保存记录”。
+
+## 技术栈
+- C# / .NET 10
+- Avalonia UI 12
+- SukiUI 7
+- CommunityToolkit.Mvvm
+- UDP + TCP Socket
+- SQLite
+- System.Text.Json Source Generator
+
+## 已实现功能
+- Telegram 风格双栏主界面。
+- 本机昵称、端口、文件接收目录、主题预留项的 JSON 设置保存。
+- UDP 局域网自动发现：HELLO、ONLINE、HEARTBEAT、BYE。
+- 在线用户列表实时更新。
+- TCP 私聊消息发送/接收。
+- 全员广播消息发送/接收。
+- SQLite 聊天记录与文件传输记录。
+- 单文件请求、接收/拒绝确认、流式分块传输、进度显示。
+- 基础日志与常见异常提示。
+- 面向 Native AOT 的 JSON Source Generator 和轻量依赖结构。
+
+## 运行方式
+```bash
+dotnet build LanTalk.sln
+dotnet run --project src/LanTalk.App
+```
+
+## 测试方式
+```bash
+dotnet test LanTalk.sln
+```
+
+## 发布方式
+```bash
+dotnet publish src/LanTalk.App -c Release -r win-x64
+```
+
+## 项目结构
+```text
+src/
+  LanTalk.App      Avalonia UI、SukiUI、ViewModel、窗口交互
+  LanTalk.Core     模型、枚举、协议、常量、JSON Source Generator
+  LanTalk.Network  UDP 自动发现、TCP 消息、TCP 文件传输
+  LanTalk.Storage  SQLite、仓储、JSON 设置
+tests/
+  LanTalk.Tests    序列化、设置、SQLite、UDP 注册表、TCP 消息、文件传输测试
+docs/
+  project-spec.md
+  protocol.md
+  ui-design.md
+  test-plan.md
+```
+
+## 演示流程
+1. 在同一局域网的两台电脑启动 LanTalk。
+2. 等待左侧在线用户列表自动出现对方。
+3. A 选择 B，发送私聊文本。
+4. B 回复 A。
+5. A 进入“全员广播”，发送广播消息。
+6. B 向 A 发送文件请求，A 选择接收或拒绝。
+7. 接收文件时观察进度，完成后到设置中的接收目录查看文件。
+8. 重启应用，打开会话确认历史记录仍可加载。
+
+## 常见问题
+- 如果端口被占用，请在设置文件中临时修改 UDP/TCP 端口，或关闭占用端口的程序。
+- Windows 防火墙可能拦截 UDP 广播或 TCP 连接，演示前需要允许应用通过专用网络。
+- 多实例在同一台电脑上默认不能同时使用 50000/50001/50002，需要修改端口后再测试。
+- MVP 暂不实现永久群聊、断点续传、加密、托盘、桌面通知和跨网段手动添加 IP。
+
+## 小组分工
+- UI 与交互：
+- 网络协议：
+- 数据存储：
+- 测试与文档：
+

@@ -1,0 +1,22 @@
+<Styles xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+    <Styles.Resources>
+        <Color x:Key="LanTalkBlueColor">#2A8CFF</Color>
+        <Color x:Key="LanTalkBlueDarkColor">#1669C9</Color>
+        <Color x:Key="LanTalkSidebarColor">#F5F8FC</Color>
+        <Color x:Key="LanTalkSurfaceColor">#FFFFFF</Color>
+        <Color x:Key="LanTalkChatColor">#EEF4FB</Color>
+        <Color x:Key="LanTalkTextColor">#1F2937</Color>
+        <Color x:Key="LanTalkMutedTextColor">#6B7280</Color>
+        <Color x:Key="LanTalkBorderColor">#D9E2EF</Color>
+        <SolidColorBrush x:Key="LanTalkBlueBrush" Color="{StaticResource LanTalkBlueColor}"/>
+        <SolidColorBrush x:Key="LanTalkBlueDarkBrush" Color="{StaticResource LanTalkBlueDarkColor}"/>
+        <SolidColorBrush x:Key="LanTalkSidebarBrush" Color="{StaticResource LanTalkSidebarColor}"/>
+        <SolidColorBrush x:Key="LanTalkSurfaceBrush" Color="{StaticResource LanTalkSurfaceColor}"/>
+        <SolidColorBrush x:Key="LanTalkChatBrush" Color="{StaticResource LanTalkChatColor}"/>
+        <SolidColorBrush x:Key="LanTalkTextBrush" Color="{StaticResource LanTalkTextColor}"/>
+        <SolidColorBrush x:Key="LanTalkMutedTextBrush" Color="{StaticResource LanTalkMutedTextColor}"/>
+        <SolidColorBrush x:Key="LanTalkBorderBrush" Color="{StaticResource LanTalkBorderColor}"/>
+    </Styles.Resources>
+</Styles>
+

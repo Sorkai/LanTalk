@@ -1,0 +1,19 @@
+<Application xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:local="using:LanTalk.App"
+             xmlns:suki="clr-namespace:SukiUI;assembly=SukiUI"
+             x:Class="LanTalk.App.App"
+             RequestedThemeVariant="Default">
+
+    <Application.DataTemplates>
+        <local:ViewLocator/>
+    </Application.DataTemplates>
+
+    <Application.Styles>
+        <suki:SukiTheme/>
+        <StyleInclude Source="avares://LanTalk.App/Styles/Colors.axaml"/>
+        <StyleInclude Source="avares://LanTalk.App/Styles/Controls.axaml"/>
+        <StyleInclude Source="avares://LanTalk.App/Styles/Chat.axaml"/>
+    </Application.Styles>
+</Application>
+

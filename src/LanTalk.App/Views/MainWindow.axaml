@@ -1,0 +1,368 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:vm="using:LanTalk.App.ViewModels"
+        xmlns:conv="using:LanTalk.App.Converters"
+        xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+        xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+        mc:Ignorable="d"
+        x:Class="LanTalk.App.Views.MainWindow"
+        x:DataType="vm:MainWindowViewModel"
+        Icon="/Assets/avalonia-logo.ico"
+        Title="LanTalk"
+        MinWidth="1040"
+        MinHeight="680"
+        Width="1180"
+        Height="760"
+        Background="{StaticResource LanTalkChatBrush}">
+
+    <Window.Resources>
+        <conv:InverseBoolConverter x:Key="InverseBoolConverter"/>
+        <conv:GreaterThanZeroConverter x:Key="GreaterThanZeroConverter"/>
+    </Window.Resources>
+
+    <Design.DataContext>
+        <vm:MainWindowViewModel/>
+    </Design.DataContext>
+
+    <Grid RowDefinitions="48,*">
+        <Border Grid.Row="0"
+                Background="{StaticResource LanTalkSurfaceBrush}"
+                BorderBrush="{StaticResource LanTalkBorderBrush}"
+                BorderThickness="0,0,0,1">
+            <Grid ColumnDefinitions="320,*" Margin="16,0">
+                <StackPanel Orientation="Horizontal" Spacing="10" VerticalAlignment="Center">
+                    <Border Width="28" Height="28" CornerRadius="7" Background="{StaticResource LanTalkBlueBrush}">
+                        <TextBlock Text="L" Foreground="White" FontWeight="Bold" HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                    </Border>
+                    <TextBlock Text="LanTalk" FontSize="16" FontWeight="SemiBold" VerticalAlignment="Center"/>
+                    <TextBlock Text="局域网即时通信 MVP" Classes="caption" VerticalAlignment="Center"/>
+                </StackPanel>
+
+                <TextBlock Grid.Column="1"
+                           Text="{Binding StatusMessage}"
+                           Classes="caption"
+                           HorizontalAlignment="Right"
+                           VerticalAlignment="Center"/>
+            </Grid>
+        </Border>
+
+        <Grid Grid.Row="1" ColumnDefinitions="320,*">
+            <Border Grid.Column="0"
+                    Background="{StaticResource LanTalkSidebarBrush}"
+                    BorderBrush="{StaticResource LanTalkBorderBrush}"
+                    BorderThickness="0,0,1,0">
+                <Grid RowDefinitions="Auto,Auto,Auto,*,Auto" Margin="16" RowSpacing="14">
+                    <Border Background="{StaticResource LanTalkSurfaceBrush}"
+                            BorderBrush="{StaticResource LanTalkBorderBrush}"
+                            BorderThickness="1"
+                            CornerRadius="8"
+                            Padding="12">
+                        <Grid ColumnDefinitions="44,*,Auto" ColumnSpacing="10">
+                            <Border Width="44" Height="44" CornerRadius="22" Background="{StaticResource LanTalkBlueBrush}">
+                                <TextBlock Text="我"
+                                           Foreground="White"
+                                           FontSize="16"
+                                           FontWeight="SemiBold"
+                                           HorizontalAlignment="Center"
+                                           VerticalAlignment="Center"/>
+                            </Border>
+                            <StackPanel Grid.Column="1" Spacing="2" VerticalAlignment="Center">
+                                <TextBlock Text="{Binding LocalNickname}" FontWeight="SemiBold" TextTrimming="CharacterEllipsis"/>
+                                <TextBlock Text="{Binding LocalIpAddress}" Classes="caption"/>
+                            </StackPanel>
+                            <Button Grid.Column="2"
+                                    Classes="icon"
+                                    Content="⚙"
+                                    ToolTip.Tip="设置"
+                                    Command="{Binding OpenSettingsCommand}"/>
+                        </Grid>
+                    </Border>
+
+                    <TextBox Grid.Row="1"
+                             Classes="search"
+                             PlaceholderText="搜索用户或会话"
+                             Text="{Binding SearchText}"/>
+
+                    <Button Grid.Row="2"
+                            Classes="primary"
+                            HorizontalAlignment="Stretch"
+                            Command="{Binding SelectBroadcastCommand}">
+                        <Grid ColumnDefinitions="Auto,*">
+                            <TextBlock Text="📣" FontSize="16" VerticalAlignment="Center"/>
+                            <TextBlock Grid.Column="1" Text="全员广播" Margin="8,0,0,0" VerticalAlignment="Center"/>
+                        </Grid>
+                    </Button>
+
+                    <ScrollViewer Grid.Row="3">
+                        <StackPanel Spacing="16">
+                            <StackPanel Spacing="8">
+                                <Grid ColumnDefinitions="*,Auto">
+                                    <TextBlock Text="最近会话" Classes="caption" FontWeight="SemiBold"/>
+                                    <TextBlock Grid.Column="1" Text="{Binding RecentSessions.Count}" Classes="caption"/>
+                                </Grid>
+                                <ItemsControl ItemsSource="{Binding RecentSessions}">
+                                    <ItemsControl.ItemTemplate>
+                                        <DataTemplate x:DataType="vm:OnlineUserViewModel">
+                                            <Button HorizontalAlignment="Stretch"
+                                                    Padding="8"
+                                                    CornerRadius="8"
+                                                    Background="Transparent"
+                                                    Command="{Binding $parent[Window].DataContext.SelectUserCommand}"
+                                                    CommandParameter="{Binding}">
+                                                <Grid ColumnDefinitions="36,*,Auto" ColumnSpacing="8">
+                                                    <Border Width="36" Height="36" CornerRadius="18" Background="#E1F0FF">
+                                                        <TextBlock Text="{Binding Initial}" Foreground="{StaticResource LanTalkBlueDarkBrush}" FontWeight="SemiBold" HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                                                    </Border>
+                                                    <StackPanel Grid.Column="1" Spacing="2">
+                                                        <TextBlock Text="{Binding Nickname}" FontWeight="SemiBold" TextTrimming="CharacterEllipsis"/>
+                                                        <TextBlock Text="{Binding LastMessage}" Classes="caption" TextTrimming="CharacterEllipsis"/>
+                                                    </StackPanel>
+                                                    <Border Grid.Column="2"
+                                                            IsVisible="{Binding UnreadCount, Converter={StaticResource GreaterThanZeroConverter}}"
+                                                            Background="{StaticResource LanTalkBlueBrush}"
+                                                            CornerRadius="10"
+                                                            Padding="6,2"
+                                                            VerticalAlignment="Center">
+                                                        <TextBlock Text="{Binding UnreadCount}" Foreground="White" FontSize="11"/>
+                                                    </Border>
+                                                </Grid>
+                                            </Button>
+                                        </DataTemplate>
+                                    </ItemsControl.ItemTemplate>
+                                </ItemsControl>
+                            </StackPanel>
+
+                            <StackPanel Spacing="8">
+                                <Grid ColumnDefinitions="*,Auto">
+                                    <TextBlock Text="在线用户" Classes="caption" FontWeight="SemiBold"/>
+                                    <TextBlock Grid.Column="1" Text="{Binding OnlineCount}" Classes="caption"/>
+                                </Grid>
+                                <ItemsControl ItemsSource="{Binding OnlineUsers}">
+                                    <ItemsControl.ItemTemplate>
+                                        <DataTemplate x:DataType="vm:OnlineUserViewModel">
+                                            <Button HorizontalAlignment="Stretch"
+                                                    Padding="8"
+                                                    CornerRadius="8"
+                                                    Background="Transparent"
+                                                    Command="{Binding $parent[Window].DataContext.SelectUserCommand}"
+                                                    CommandParameter="{Binding}">
+                                                <Grid ColumnDefinitions="36,*,Auto" ColumnSpacing="8">
+                                                    <Border Width="36" Height="36" CornerRadius="18" Background="#EAF4FF">
+                                                        <TextBlock Text="{Binding Initial}" Foreground="{StaticResource LanTalkBlueDarkBrush}" FontWeight="SemiBold" HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                                                    </Border>
+                                                    <StackPanel Grid.Column="1" Spacing="2">
+                                                        <TextBlock Text="{Binding Nickname}" FontWeight="SemiBold" TextTrimming="CharacterEllipsis"/>
+                                                        <TextBlock Text="{Binding IpAddress}" Classes="caption"/>
+                                                    </StackPanel>
+                                                    <StackPanel Grid.Column="2" HorizontalAlignment="Right" VerticalAlignment="Center">
+                                                        <TextBlock Text="{Binding StatusText}" Classes="caption"/>
+                                                    </StackPanel>
+                                                </Grid>
+                                            </Button>
+                                        </DataTemplate>
+                                    </ItemsControl.ItemTemplate>
+                                </ItemsControl>
+                            </StackPanel>
+                        </StackPanel>
+                    </ScrollViewer>
+
+                    <Border Grid.Row="4"
+                            Background="#E8F2FF"
+                            BorderBrush="{StaticResource LanTalkBorderBrush}"
+                            BorderThickness="1"
+                            CornerRadius="8"
+                            Padding="10">
+                        <TextBlock Text="阶段 1 使用假数据；UDP 自动发现将在阶段 3 替换在线列表。"
+                                   Classes="caption"
+                                   TextWrapping="Wrap"/>
+                    </Border>
+                </Grid>
+            </Border>
+
+            <Grid Grid.Column="1" RowDefinitions="72,*,78">
+                <Border Grid.Row="0"
+                        Background="{StaticResource LanTalkSurfaceBrush}"
+                        BorderBrush="{StaticResource LanTalkBorderBrush}"
+                        BorderThickness="0,0,0,1"
+                        Padding="20,0">
+                    <Grid ColumnDefinitions="*,Auto">
+                        <StackPanel VerticalAlignment="Center" Spacing="4">
+                            <TextBlock Text="{Binding CurrentSessionTitle}" Classes="title"/>
+                            <TextBlock Text="{Binding CurrentSessionSubtitle}" Classes="caption"/>
+                        </StackPanel>
+                        <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="10" VerticalAlignment="Center">
+                            <Button Content="刷新" ToolTip.Tip="手动刷新在线用户将在 UDP 阶段接入"/>
+                            <Button Content="设置" Command="{Binding OpenSettingsCommand}"/>
+                        </StackPanel>
+                    </Grid>
+                </Border>
+
+                <ScrollViewer Grid.Row="1" Padding="20">
+                    <ItemsControl ItemsSource="{Binding Messages}">
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate x:DataType="vm:ChatMessageViewModel">
+                                <Grid Margin="0,6">
+                                    <StackPanel IsVisible="{Binding IsMine, Converter={StaticResource InverseBoolConverter}}"
+                                                HorizontalAlignment="Left"
+                                                Spacing="4">
+                                        <TextBlock Text="{Binding SenderName}" Classes="caption"/>
+                                        <Border Classes="messageBubble messageOther">
+                                            <StackPanel Spacing="6">
+                                                <TextBlock Text="{Binding Content}" TextWrapping="Wrap" Foreground="{StaticResource LanTalkTextBrush}"/>
+                                                <Border Classes="fileCard" IsVisible="{Binding IsFile}">
+                                                    <StackPanel Spacing="6">
+                                                        <TextBlock Text="{Binding FileName}" FontWeight="SemiBold"/>
+                                                        <TextBlock Text="{Binding FileSizeText}" Classes="caption"/>
+                                                        <ProgressBar Minimum="0" Maximum="100" Value="{Binding Progress}"/>
+                                                        <TextBlock Text="{Binding StatusText}" Classes="caption"/>
+                                                    </StackPanel>
+                                                </Border>
+                                                <TextBlock Text="{Binding TimeText}" Classes="caption" HorizontalAlignment="Right"/>
+                                            </StackPanel>
+                                        </Border>
+                                    </StackPanel>
+
+                                    <StackPanel IsVisible="{Binding IsMine}" HorizontalAlignment="Right" Spacing="4">
+                                        <TextBlock Text="{Binding SenderName}" Classes="caption" HorizontalAlignment="Right"/>
+                                        <Border Classes="messageBubble messageMine">
+                                            <StackPanel Spacing="6">
+                                                <TextBlock Text="{Binding Content}" TextWrapping="Wrap" Foreground="White"/>
+                                                <Border Classes="fileCard" IsVisible="{Binding IsFile}">
+                                                    <StackPanel Spacing="6">
+                                                        <TextBlock Text="{Binding FileName}" FontWeight="SemiBold"/>
+                                                        <TextBlock Text="{Binding FileSizeText}" Classes="caption"/>
+                                                        <ProgressBar Minimum="0" Maximum="100" Value="{Binding Progress}"/>
+                                                        <TextBlock Text="{Binding StatusText}" Classes="caption"/>
+                                                    </StackPanel>
+                                                </Border>
+                                                <TextBlock Text="{Binding TimeText}" Foreground="#DCEEFF" FontSize="12" HorizontalAlignment="Right"/>
+                                            </StackPanel>
+                                        </Border>
+                                    </StackPanel>
+                                </Grid>
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+                </ScrollViewer>
+
+                <Border Grid.Row="2"
+                        Background="{StaticResource LanTalkSurfaceBrush}"
+                        BorderBrush="{StaticResource LanTalkBorderBrush}"
+                        BorderThickness="0,1,0,0"
+                        Padding="18,12">
+                    <Grid ColumnDefinitions="Auto,*,Auto" ColumnSpacing="10">
+                        <Button Classes="icon"
+                                Content="📎"
+                                ToolTip.Tip="发送文件"
+                                Command="{Binding AttachFileCommand}"/>
+                        <TextBox Grid.Column="1"
+                                 MinHeight="42"
+                                 CornerRadius="8"
+                                 PlaceholderText="输入消息"
+                                 Text="{Binding DraftMessage}"
+                                 AcceptsReturn="True"/>
+                        <Button Grid.Column="2"
+                                Classes="primary"
+                                Content="发送"
+                                Command="{Binding SendMessageCommand}"/>
+                    </Grid>
+                </Border>
+            </Grid>
+
+            <Border Grid.ColumnSpan="2"
+                    IsVisible="{Binding IsSettingsPaneOpen}"
+                    Background="#99000000">
+                <Border Width="460"
+                        HorizontalAlignment="Right"
+                        Background="{StaticResource LanTalkSurfaceBrush}"
+                        Padding="24"
+                        BoxShadow="0 0 18 0 #33000000">
+                    <Grid RowDefinitions="Auto,*,Auto">
+                        <Grid ColumnDefinitions="*,Auto">
+                            <TextBlock Text="基础设置" Classes="title"/>
+                            <Button Grid.Column="1" Content="关闭" Command="{Binding CloseSettingsCommand}"/>
+                        </Grid>
+
+                        <StackPanel Grid.Row="1" Spacing="16" Margin="0,24,0,0">
+                            <StackPanel Spacing="6">
+                                <TextBlock Text="昵称" FontWeight="SemiBold"/>
+                                <TextBox Text="{Binding Settings.Nickname}" PlaceholderText="请输入昵称"/>
+                            </StackPanel>
+
+                            <StackPanel Spacing="6">
+                                <TextBlock Text="文件接收目录" FontWeight="SemiBold"/>
+                                <TextBox Text="{Binding Settings.FileSavePath}" PlaceholderText="选择或输入文件保存目录"/>
+                            </StackPanel>
+
+                            <CheckBox Content="保存聊天记录" IsChecked="{Binding Settings.SaveChatHistory}"/>
+
+                            <Grid ColumnDefinitions="*,*" ColumnSpacing="12">
+                                <StackPanel Spacing="6">
+                                    <TextBlock Text="主题模式" FontWeight="SemiBold"/>
+                                    <ComboBox SelectedItem="{Binding Settings.ThemeMode}">
+                                        <ComboBoxItem Content="System"/>
+                                        <ComboBoxItem Content="Light"/>
+                                        <ComboBoxItem Content="Dark"/>
+                                    </ComboBox>
+                                </StackPanel>
+
+                                <StackPanel Grid.Column="1" Spacing="6">
+                                    <TextBlock Text="主题色" FontWeight="SemiBold"/>
+                                    <ComboBox SelectedItem="{Binding Settings.ThemeColor}">
+                                        <ComboBoxItem Content="Blue"/>
+                                        <ComboBoxItem Content="Green"/>
+                                        <ComboBoxItem Content="Purple"/>
+                                    </ComboBox>
+                                </StackPanel>
+                            </Grid>
+
+                            <Border Background="{StaticResource LanTalkSidebarBrush}" CornerRadius="8" Padding="12">
+                                <StackPanel Spacing="6">
+                                    <TextBlock Text="网络端口" FontWeight="SemiBold"/>
+                                    <TextBlock Text="{Binding Settings.UdpPort, StringFormat='UDP 自动发现：{0}'}" Classes="caption"/>
+                                    <TextBlock Text="{Binding Settings.MessagePort, StringFormat='TCP 消息：{0}'}" Classes="caption"/>
+                                    <TextBlock Text="{Binding Settings.FilePort, StringFormat='TCP 文件：{0}'}" Classes="caption"/>
+                                </StackPanel>
+                            </Border>
+                        </StackPanel>
+
+                        <StackPanel Grid.Row="2" Orientation="Horizontal" Spacing="10" HorizontalAlignment="Right">
+                            <Button Content="取消" Command="{Binding CloseSettingsCommand}"/>
+                            <Button Classes="primary" Content="保存设置" Command="{Binding SaveSettingsCommand}"/>
+                        </StackPanel>
+                    </Grid>
+                </Border>
+            </Border>
+
+            <Border Grid.ColumnSpan="2"
+                    IsVisible="{Binding IsFileRequestPaneOpen}"
+                    Background="#66000000">
+                <Border Width="420"
+                        HorizontalAlignment="Center"
+                        VerticalAlignment="Center"
+                        Background="{StaticResource LanTalkSurfaceBrush}"
+                        CornerRadius="8"
+                        Padding="22"
+                        BoxShadow="0 8 22 0 #33000000">
+                    <StackPanel Spacing="14">
+                        <TextBlock Text="接收文件" Classes="title"/>
+                        <TextBlock Text="{Binding PendingFileRequest.SenderName, StringFormat='来自：{0}'}"/>
+                        <Border Classes="fileCard">
+                            <StackPanel Spacing="6">
+                                <TextBlock Text="{Binding PendingFileRequest.FileName}" FontWeight="SemiBold"/>
+                                <TextBlock Text="{Binding PendingFileRequest.FileSizeText}" Classes="caption"/>
+                            </StackPanel>
+                        </Border>
+                        <TextBlock Text="文件会保存到设置中的文件接收目录。"
+                                   Classes="caption"
+                                   TextWrapping="Wrap"/>
+                        <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Spacing="10">
+                            <Button Content="拒绝" Command="{Binding RejectFileRequestCommand}"/>
+                            <Button Classes="primary" Content="接收" Command="{Binding AcceptFileRequestCommand}"/>
+                        </StackPanel>
+                    </StackPanel>
+                </Border>
+            </Border>
+        </Grid>
+    </Grid>
+</Window>

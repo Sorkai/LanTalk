@@ -1,0 +1,32 @@
+<Styles xmlns="https://github.com/avaloniaui">
+    <Style Selector="Border.messageBubble">
+        <Setter Property="CornerRadius" Value="8"/>
+        <Setter Property="Padding" Value="12,8"/>
+        <Setter Property="MaxWidth" Value="520"/>
+    </Style>
+
+    <Style Selector="Border.messageMine">
+        <Setter Property="Background" Value="{StaticResource LanTalkBlueBrush}"/>
+    </Style>
+
+    <Style Selector="Border.messageOther">
+        <Setter Property="Background" Value="{StaticResource LanTalkSurfaceBrush}"/>
+        <Setter Property="BorderBrush" Value="{StaticResource LanTalkBorderBrush}"/>
+        <Setter Property="BorderThickness" Value="1"/>
+    </Style>
+
+    <Style Selector="Border.broadcastBubble">
+        <Setter Property="Background" Value="#E8F2FF"/>
+        <Setter Property="BorderBrush" Value="{StaticResource LanTalkBlueBrush}"/>
+        <Setter Property="BorderThickness" Value="1"/>
+    </Style>
+
+    <Style Selector="Border.fileCard">
+        <Setter Property="Background" Value="#F9FAFB"/>
+        <Setter Property="BorderBrush" Value="{StaticResource LanTalkBorderBrush}"/>
+        <Setter Property="BorderThickness" Value="1"/>
+        <Setter Property="CornerRadius" Value="8"/>
+        <Setter Property="Padding" Value="10"/>
+    </Style>
+</Styles>
+
