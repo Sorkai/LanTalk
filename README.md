@@ -39,6 +39,13 @@ dotnet test LanTalk.sln
 dotnet publish src/LanTalk.App -c Release -r win-x64
 ```
 
+Native AOT 发布：
+```bash
+dotnet publish src/LanTalk.App/LanTalk.App.csproj -c Release -r win-x64 -p:PublishAot=true -v:minimal
+```
+
+当前 Native AOT 可生成 `win-x64` 发布产物；Avalonia DataGrid 依赖会产生 trim/AOT 分析警告，后续 UI 深度打磨时需要继续观察。
+
 ## 项目结构
 ```text
 src/
@@ -76,4 +83,3 @@ docs/
 - 网络协议：
 - 数据存储：
 - 测试与文档：
-

@@ -181,7 +181,8 @@
   - 移除 Avalonia 模板默认 `ViewLocator` 中的 `Type.GetType` / `Activator.CreateInstance` 反射创建逻辑。
   - 确认 JSON 序列化均使用 `LanTalkJsonContext` Source Generator。
   - 执行普通 Release 发布：`dotnet publish src/LanTalk.App/LanTalk.App.csproj -c Release -r win-x64 --self-contained false -v:minimal`，成功。
-  - 尝试 Native AOT 发布：`dotnet publish src/LanTalk.App/LanTalk.App.csproj -c Release -r win-x64 -p:PublishAot=true -v:minimal`，失败原因是本机缺少平台 linker / Visual Studio C++ 桌面开发工作负载。
+  - 2026-05-29 安装 Windows linker 后重新执行 Native AOT 发布：`dotnet publish src/LanTalk.App/LanTalk.App.csproj -c Release -r win-x64 -p:PublishAot=true -v:minimal`，发布成功，输出到 `src/LanTalk.App/bin/Release/net10.0/win-x64/publish/`。
+  - Native AOT 发布仍出现 Avalonia DataGrid 的 trim/AOT 分析警告，暂不阻塞产物生成，后续 UI 深度打磨时继续跟踪。
 - 创建/修改的文件：
   - `src/LanTalk.App/ViewLocator.cs`。
 - 创建/修改的文件：
@@ -211,7 +212,7 @@
 | 最终构建 | `dotnet build LanTalk.sln -v:minimal` | 全项目可编译 | 0 警告 0 错误 | 通过 |
 | 最终测试 | `dotnet test LanTalk.sln -v:minimal` | 全部测试通过 | 11 个测试全部通过 | 通过 |
 | 普通 Release 发布 | `dotnet publish src/LanTalk.App/LanTalk.App.csproj -c Release -r win-x64 --self-contained false -v:minimal` | 生成 win-x64 发布目录 | 发布成功，输出到 `src/LanTalk.App/bin/Release/net10.0/win-x64/publish/` | 通过 |
-| Native AOT 尝试 | `dotnet publish src/LanTalk.App/LanTalk.App.csproj -c Release -r win-x64 -p:PublishAot=true -v:minimal` | 若环境满足则生成 AOT 或输出可处理警告 | 失败：缺少 Platform linker / VS C++ build tools | 环境阻塞 |
+| Native AOT 发布 | `dotnet publish src/LanTalk.App/LanTalk.App.csproj -c Release -r win-x64 -p:PublishAot=true -v:minimal` | 生成 AOT 发布产物，警告可记录 | 发布成功；Avalonia DataGrid 输出 trim/AOT 分析警告 | 通过，需跟踪警告 |
 
 ## 错误日志
 | 时间 | 错误 | 尝试次数 | 解决方式 |
@@ -219,13 +220,14 @@
 | 2026-05-29 | `dotnet sln LanTalk.sln add` 初次失败，找不到 `LanTalk.sln` | 1 | .NET 10 默认生成 `.slnx`；补建传统 `LanTalk.sln` 后成功加入项目。 |
 | 2026-05-29 | App 构建缺少 `Task` / `Type`，并触发 MVVMTK0007 | 1 | App 项目增加 `<ImplicitUsings>enable</ImplicitUsings>`。 |
 | 2026-05-29 | 数据库初始化测试删除临时 SQLite 文件失败 | 1 | 调用 `SqliteConnection.ClearAllPools()` 后删除临时数据库。 |
-| 2026-05-29 | Native AOT 发布失败：Platform linker not found | 1 | 记录为环境前置条件缺失，需要安装 Visual Studio Desktop Development for C++ / C++ build tools。 |
+| 2026-05-29 | Native AOT 发布失败：Platform linker not found | 1 | 已安装 Windows linker 后重新验证通过。 |
+| 2026-05-29 | Avalonia DataGrid 在 Native AOT 发布时输出 trim/AOT 分析警告 | 1 | 暂不阻塞发布；记录为第三方控件 AOT 风险，后续继续观察或替换控件。 |
 
 ## 5 个恢复检查问题
 | 问题 | 答案 |
 |------|------|
-| 我现在在哪里？ | 阶段 1 到阶段 8 已完成；LanTalk MVP 已可构建、测试、普通 Release 发布。 |
+| 我现在在哪里？ | 阶段 1 到阶段 8 已完成；LanTalk MVP 已可构建、测试、普通 Release 发布和 Native AOT 发布。 |
 | 我要去哪里？ | 分阶段构建 LanTalk MVP：骨架/UI、设置、UDP 自动发现、TCP 私聊、广播、文件传输、打磨文档、AOT 检查。 |
 | 目标是什么？ | 构建一个可运行的 .NET 10 Avalonia/SukiUI 局域网 IM MVP，具备设置、发现、聊天、广播、文件传输、SQLite 历史和 AOT 友好结构。 |
 | 我学到了什么？ | 仓库当前只有项目文档，实现必须从项目初始化开始；详细内容见 `findings.md`。 |
-| 我做了什么？ | 完成 LanTalk MVP：设置、UDP 自动发现、TCP 私聊、广播、单文件流式传输、SQLite 记录、文档、测试、普通 Release 发布；Native AOT 因本机缺少 C++ linker 前置条件未完成。 |
+| 我做了什么？ | 完成 LanTalk MVP：设置、UDP 自动发现、TCP 私聊、广播、单文件流式传输、SQLite 记录、文档、测试、普通 Release 发布；安装 Windows linker 后 Native AOT 发布已通过，剩余 Avalonia DataGrid trim/AOT 警告待跟踪。 |
