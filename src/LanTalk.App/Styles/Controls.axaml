@@ -1,4 +1,8 @@
 <Styles xmlns="https://github.com/avaloniaui">
+    <Style Selector="TextBlock">
+        <Setter Property="Foreground" Value="{StaticResource LanTalkTextBrush}"/>
+    </Style>
+
     <Style Selector="TextBlock.title">
         <Setter Property="FontSize" Value="18"/>
         <Setter Property="FontWeight" Value="SemiBold"/>
@@ -8,6 +12,10 @@
     <Style Selector="TextBlock.caption">
         <Setter Property="FontSize" Value="12"/>
         <Setter Property="Foreground" Value="{StaticResource LanTalkMutedTextBrush}"/>
+    </Style>
+
+    <Style Selector="Button">
+        <Setter Property="Foreground" Value="{StaticResource LanTalkTextBrush}"/>
     </Style>
 
     <Style Selector="Button.primary">
@@ -23,6 +31,13 @@
         <Setter Property="Height" Value="38"/>
         <Setter Property="CornerRadius" Value="19"/>
         <Setter Property="Padding" Value="0"/>
+        <Setter Property="Foreground" Value="{StaticResource LanTalkTextBrush}"/>
+    </Style>
+
+    <Style Selector="TextBox">
+        <Setter Property="Background" Value="{StaticResource LanTalkSurfaceBrush}"/>
+        <Setter Property="Foreground" Value="{StaticResource LanTalkTextBrush}"/>
+        <Setter Property="BorderBrush" Value="{StaticResource LanTalkBorderBrush}"/>
     </Style>
 
     <Style Selector="TextBox.search">
@@ -30,5 +45,18 @@
         <Setter Property="MinHeight" Value="36"/>
         <Setter Property="BorderBrush" Value="{StaticResource LanTalkBorderBrush}"/>
     </Style>
-</Styles>
 
+    <Style Selector="ComboBox">
+        <Setter Property="Background" Value="{StaticResource LanTalkSurfaceBrush}"/>
+        <Setter Property="Foreground" Value="{StaticResource LanTalkTextBrush}"/>
+        <Setter Property="BorderBrush" Value="{StaticResource LanTalkBorderBrush}"/>
+    </Style>
+
+    <Style Selector="ComboBoxItem">
+        <Setter Property="Foreground" Value="{StaticResource LanTalkTextBrush}"/>
+    </Style>
+
+    <Style Selector="CheckBox">
+        <Setter Property="Foreground" Value="{StaticResource LanTalkTextBrush}"/>
+    </Style>
+</Styles>

@@ -88,8 +88,8 @@
                             HorizontalAlignment="Stretch"
                             Command="{Binding SelectBroadcastCommand}">
                         <Grid ColumnDefinitions="Auto,*">
-                            <TextBlock Text="📣" FontSize="16" VerticalAlignment="Center"/>
-                            <TextBlock Grid.Column="1" Text="全员广播" Margin="8,0,0,0" VerticalAlignment="Center"/>
+                            <TextBlock Text="📣" FontSize="16" Foreground="White" VerticalAlignment="Center"/>
+                            <TextBlock Grid.Column="1" Text="全员广播" Foreground="White" Margin="8,0,0,0" VerticalAlignment="Center"/>
                         </Grid>
                     </Button>
 

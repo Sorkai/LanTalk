@@ -3,7 +3,7 @@
              xmlns:local="using:LanTalk.App"
              xmlns:suki="clr-namespace:SukiUI;assembly=SukiUI"
              x:Class="LanTalk.App.App"
-             RequestedThemeVariant="Default">
+             RequestedThemeVariant="Light">
 
     <Application.DataTemplates>
         <local:ViewLocator/>
@@ -16,4 +16,3 @@
         <StyleInclude Source="avares://LanTalk.App/Styles/Chat.axaml"/>
     </Application.Styles>
 </Application>
-
