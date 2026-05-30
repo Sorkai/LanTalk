@@ -1,6 +1,7 @@
 using System.Text.Json;
 using LanTalk.Core.Constants;
 using LanTalk.Core.Models;
+using LanTalk.Core.Networking;
 using LanTalk.Core.Serialization;
 using LanTalk.Core.Services;
 
@@ -105,6 +106,7 @@ public sealed class SettingsService
 
         settings.ThemeMode = NormalizeValue(settings.ThemeMode, "System", "Light", "Dark");
         settings.ThemeColor = NormalizeValue(settings.ThemeColor, "Blue", "Green", "Purple");
+        settings.DiscoverySubnet = NormalizeDiscoverySubnet(settings.DiscoverySubnet);
         settings.UdpPort = NormalizePort(settings.UdpPort, NetworkConstants.DefaultUdpPort);
         settings.MessagePort = NormalizePort(settings.MessagePort, NetworkConstants.DefaultMessagePort);
         settings.FilePort = NormalizePort(settings.FilePort, NetworkConstants.DefaultFilePort);
@@ -133,5 +135,12 @@ public sealed class SettingsService
     private static int NormalizePort(int value, int defaultValue)
     {
         return value is >= 1024 and <= 65535 ? value : defaultValue;
+    }
+
+    private static string NormalizeDiscoverySubnet(string? value)
+    {
+        return DiscoverySubnetResolver.TryNormalize(value, out var normalized)
+            ? normalized
+            : NetworkConstants.DefaultDiscoverySubnet;
     }
 }

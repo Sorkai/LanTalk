@@ -1,4 +1,5 @@
 using CommunityToolkit.Mvvm.ComponentModel;
+using LanTalk.Core.Constants;
 using LanTalk.Core.Models;
 
 namespace LanTalk.App.ViewModels;
@@ -29,6 +30,9 @@ public sealed partial class SettingsViewModel : ViewModelBase
     [ObservableProperty]
     private int filePort = 50002;
 
+    [ObservableProperty]
+    private string discoverySubnet = NetworkConstants.DefaultDiscoverySubnet;
+
     public static SettingsViewModel FromSettings(AppSettings settings)
     {
         return new SettingsViewModel
@@ -40,8 +44,8 @@ public sealed partial class SettingsViewModel : ViewModelBase
             ThemeColor = settings.ThemeColor,
             UdpPort = settings.UdpPort,
             MessagePort = settings.MessagePort,
-            FilePort = settings.FilePort
+            FilePort = settings.FilePort,
+            DiscoverySubnet = settings.DiscoverySubnet
         };
     }
 }
-

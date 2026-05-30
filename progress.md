@@ -325,3 +325,25 @@
   - 用户准备更多电脑后，继续阶段 11 双机/三机真实验收。
   - 手动制造端口占用场景，确认启动提示和日志符合预期。
   - 继续验证文件传输中断、100MB 文件和防火墙拦截场景。
+
+### 阶段 12：自动发现网段设置
+- **状态：** 已完成代码实现，等待多机环境验证。
+- 本轮目标：
+  - 给软件增加局域网自动发现网段设置。
+  - 用户可自行设置自动发现使用的网段或广播地址。
+  - 保持 UDP 发现协议、模块边界和 AOT 友好结构稳定。
+- 已执行操作：
+  - 新增 `AppSettings.DiscoverySubnet`，默认值为 `Auto`。
+  - 新增 `DiscoverySubnetResolver`，支持 `Auto`、CIDR 网段、`192.168.1.*` 通配网段、指定 IPv4 广播地址和多个目标分隔输入。
+  - 设置页新增“自动发现网段”输入框，和端口设置同属“网络发现”区域。
+  - 保存设置时校验网段格式，非法格式不会保存，并提示用户使用 `Auto`、CIDR 或通配网段。
+  - `SettingsService` 会规范化网段配置；非法值回退到 `Auto`。
+  - `DiscoveryService` 主动发送 `HELLO`、`HEARTBEAT`、`BYE` 时按设置发送到解析后的广播地址；`ONLINE` 仍定向回复源地址。
+  - 新增网段解析测试，并扩展设置保存测试。
+- 当前验证：
+  - `dotnet build LanTalk.sln -v:minimal`：0 警告，0 错误。
+  - `dotnet test LanTalk.sln -v:minimal`：22 个测试全部通过。
+  - Debug 启动冒烟：应用成功启动，8 秒后停止，未留下运行中的 LanTalk 进程。
+  - `dotnet publish src/LanTalk.App/LanTalk.App.csproj -c Release -r win-x64 -p:PublishAot=true -v:minimal`：发布成功；仍仅保留既有 Avalonia DataGrid trim/AOT 分析警告。
+- 后续待验证：
+  - 双机/三机环境下验证 `Auto`、`192.168.x.0/24` 和指定广播地址。

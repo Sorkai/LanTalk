@@ -35,6 +35,7 @@ public sealed class SettingsServiceTests
         settings.UdpPort = 50010;
         settings.MessagePort = 50011;
         settings.FilePort = 50012;
+        settings.DiscoverySubnet = "192.168.8.32/24";
 
         await service.SaveAsync(settings);
         var loaded = await service.LoadAsync();
@@ -47,6 +48,7 @@ public sealed class SettingsServiceTests
         Assert.Equal(50010, loaded.UdpPort);
         Assert.Equal(50011, loaded.MessagePort);
         Assert.Equal(50012, loaded.FilePort);
+        Assert.Equal("192.168.8.0/24", loaded.DiscoverySubnet);
     }
 
     [Fact]
@@ -102,6 +104,21 @@ public sealed class SettingsServiceTests
         Assert.Equal(NetworkConstants.DefaultUdpPort, loaded.UdpPort);
         Assert.Equal(NetworkConstants.DefaultMessagePort, loaded.MessagePort);
         Assert.Equal(NetworkConstants.DefaultFilePort, loaded.FilePort);
+    }
+
+    [Fact]
+    public async Task SaveAsync_ShouldNormalizeInvalidDiscoverySubnet()
+    {
+        var settingsPath = CreateTempSettingsPath();
+        var service = new SettingsService(new ConsoleLanTalkLogger(), settingsPath);
+        var settings = await service.LoadAsync();
+
+        settings.DiscoverySubnet = "not-a-subnet";
+
+        await service.SaveAsync(settings);
+        var loaded = await service.LoadAsync();
+
+        Assert.Equal(NetworkConstants.DefaultDiscoverySubnet, loaded.DiscoverySubnet);
     }
 
     [Fact]

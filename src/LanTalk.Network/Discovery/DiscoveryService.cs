@@ -1,8 +1,10 @@
 using System.Net;
+using System.Net.Sockets;
 using System.Text.Json;
 using LanTalk.Core.Constants;
 using LanTalk.Core.Enums;
 using LanTalk.Core.Models;
+using LanTalk.Core.Networking;
 using LanTalk.Core.Serialization;
 using LanTalk.Core.Services;
 
@@ -149,7 +151,33 @@ public sealed class DiscoveryService : IAsyncDisposable
             PayloadJson = JsonSerializer.Serialize(payload, LanTalkJsonContext.Default.DiscoveryPayload)
         };
 
-        return _server.SendAsync(packet, _settings.UdpPort, address, cancellationToken);
+        if (address is not null)
+        {
+            return _server.SendAsync(packet, _settings.UdpPort, address, cancellationToken);
+        }
+
+        return SendToDiscoveryTargetsAsync(packet, cancellationToken);
+    }
+
+    private async Task SendToDiscoveryTargetsAsync(NetworkPacket packet, CancellationToken cancellationToken)
+    {
+        if (_settings is null)
+        {
+            return;
+        }
+
+        var targets = DiscoverySubnetResolver.GetBroadcastAddresses(_settings.DiscoverySubnet);
+        foreach (var target in targets)
+        {
+            try
+            {
+                await _server.SendAsync(packet, _settings.UdpPort, target, cancellationToken).ConfigureAwait(false);
+            }
+            catch (Exception ex) when (ex is SocketException or ObjectDisposedException or InvalidOperationException)
+            {
+                _logger.Warning($"UDP 自动发现发送到 {target} 失败：{ex.Message}");
+            }
+        }
     }
 
     public async ValueTask DisposeAsync()

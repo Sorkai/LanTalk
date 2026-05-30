@@ -323,7 +323,12 @@
 
                             <Border Background="{StaticResource LanTalkSidebarBrush}" CornerRadius="8" Padding="12">
                                 <StackPanel Spacing="8">
-                                    <TextBlock Text="网络端口" FontWeight="SemiBold"/>
+                                    <TextBlock Text="网络发现" FontWeight="SemiBold"/>
+                                    <StackPanel Spacing="6">
+                                        <TextBlock Text="自动发现网段" Classes="caption"/>
+                                        <TextBox Text="{Binding Settings.DiscoverySubnet}"
+                                                 PlaceholderText="Auto 或 192.168.1.0/24"/>
+                                    </StackPanel>
                                     <Grid ColumnDefinitions="120,*" RowDefinitions="Auto,Auto,Auto" RowSpacing="8" ColumnSpacing="12">
                                         <TextBlock Text="UDP 自动发现" Classes="caption" VerticalAlignment="Center"/>
                                         <NumericUpDown Grid.Column="1"
@@ -348,7 +353,7 @@
                                                        Increment="1"
                                                        Value="{Binding Settings.FilePort}"/>
                                     </Grid>
-                                    <TextBlock Text="端口保存后需要重启 LanTalk 才会重新监听。"
+                                    <TextBlock Text="网络发现设置保存后需要重启 LanTalk 才会重新监听。"
                                                Classes="caption"
                                                TextWrapping="Wrap"/>
                                 </StackPanel>

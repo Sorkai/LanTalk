@@ -7,6 +7,7 @@ using CommunityToolkit.Mvvm.Input;
 using LanTalk.Core.Constants;
 using LanTalk.Core.Enums;
 using LanTalk.Core.Models;
+using LanTalk.Core.Networking;
 using LanTalk.Core.Serialization;
 using LanTalk.Core.Services;
 using LanTalk.App.Services;
@@ -230,10 +231,17 @@ public sealed partial class MainWindowViewModel : ViewModelBase
             return;
         }
 
+        if (!DiscoverySubnetResolver.TryNormalize(Settings.DiscoverySubnet, out var normalizedDiscoverySubnet))
+        {
+            StatusMessage = "自动发现网段格式不正确，请使用 Auto、192.168.1.0/24 或 192.168.1.*。";
+            return;
+        }
+
         var portsChanged =
             _settings.UdpPort != Settings.UdpPort ||
             _settings.MessagePort != Settings.MessagePort ||
-            _settings.FilePort != Settings.FilePort;
+            _settings.FilePort != Settings.FilePort ||
+            !string.Equals(_settings.DiscoverySubnet, normalizedDiscoverySubnet, StringComparison.OrdinalIgnoreCase);
 
         _settings.Nickname = Settings.Nickname.Trim();
         _settings.FileSavePath = Settings.FileSavePath.Trim();
@@ -243,13 +251,14 @@ public sealed partial class MainWindowViewModel : ViewModelBase
         _settings.UdpPort = Settings.UdpPort;
         _settings.MessagePort = Settings.MessagePort;
         _settings.FilePort = Settings.FilePort;
+        _settings.DiscoverySubnet = normalizedDiscoverySubnet;
 
         await _settingsService.SaveAsync(_settings);
         AppThemeService.Apply(_settings);
         LocalNickname = _settings.Nickname;
         IsSettingsPaneOpen = false;
         StatusMessage = portsChanged
-            ? "设置已保存。端口变更将在重启 LanTalk 后生效。"
+            ? "设置已保存。网络发现设置变更将在重启 LanTalk 后生效。"
             : "设置已保存。";
     }
 

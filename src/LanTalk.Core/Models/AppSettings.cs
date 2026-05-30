@@ -14,6 +14,8 @@ public sealed class AppSettings
 
     public int FilePort { get; set; } = NetworkConstants.DefaultFilePort;
 
+    public string DiscoverySubnet { get; set; } = NetworkConstants.DefaultDiscoverySubnet;
+
     public string FileSavePath { get; set; } = string.Empty;
 
     public bool SaveChatHistory { get; set; } = true;
@@ -22,4 +24,3 @@ public sealed class AppSettings
 
     public string ThemeColor { get; set; } = "Blue";
 }
-
