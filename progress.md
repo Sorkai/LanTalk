@@ -347,3 +347,22 @@
   - `dotnet publish src/LanTalk.App/LanTalk.App.csproj -c Release -r win-x64 -p:PublishAot=true -v:minimal`：发布成功；仍仅保留既有 Avalonia DataGrid trim/AOT 分析警告。
 - 后续待验证：
   - 双机/三机环境下验证 `Auto`、`192.168.x.0/24` 和指定广播地址。
+
+### 阶段 12：多网段添加 UI 改造
+- **状态：** 已完成代码实现，等待验证。
+- 本轮目标：
+  - 将自动发现网段从单个文本框改造为可添加多个网段的设置界面。
+  - 保持底层 `DiscoverySubnet` 存储和发现发送逻辑不变，降低迁移风险。
+- 已执行操作：
+  - `SettingsViewModel` 新增 `DiscoverySubnets` 列表和添加/删除命令。
+  - 设置页新增多行网段列表，每行支持单独编辑和删除，并保留 `+` 添加入口。
+  - 保存设置时将多行网段合并后统一校验与规范化。
+  - 设置面板中间内容改为滚动区域，避免多网段时挤压底部按钮。
+  - 扩展网段解析与设置服务测试，覆盖多个发现网段。
+- 当前验证：
+  - `dotnet build LanTalk.sln -v:minimal`：0 警告，0 错误。
+  - `dotnet test LanTalk.sln -v:minimal`：24 个测试全部通过。
+  - Debug 启动冒烟：应用成功启动，8 秒后停止，未留下运行中的 LanTalk 进程。
+  - `dotnet publish src/LanTalk.App/LanTalk.App.csproj -c Release -r win-x64 -p:PublishAot=true -v:minimal`：发布成功；仍仅保留既有 Avalonia DataGrid trim/AOT 分析警告。
+- 后续待验证：
+  - 双机/三机环境下验证多个网段是否按预期发送发现包。

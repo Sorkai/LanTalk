@@ -231,9 +231,10 @@ public sealed partial class MainWindowViewModel : ViewModelBase
             return;
         }
 
-        if (!DiscoverySubnetResolver.TryNormalize(Settings.DiscoverySubnet, out var normalizedDiscoverySubnet))
+        var discoverySubnetText = Settings.GetDiscoverySubnetText();
+        if (!DiscoverySubnetResolver.TryNormalize(discoverySubnetText, out var normalizedDiscoverySubnet))
         {
-            StatusMessage = "自动发现网段格式不正确，请使用 Auto、192.168.1.0/24 或 192.168.1.*。";
+            StatusMessage = "自动发现网段格式不正确，请逐行使用 Auto、192.168.1.0/24、192.168.1.* 或 192.168.1.255。";
             return;
         }
 

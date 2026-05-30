@@ -122,6 +122,21 @@ public sealed class SettingsServiceTests
     }
 
     [Fact]
+    public async Task SaveAsync_ShouldPersistMultipleDiscoverySubnets()
+    {
+        var settingsPath = CreateTempSettingsPath();
+        var service = new SettingsService(new ConsoleLanTalkLogger(), settingsPath);
+        var settings = await service.LoadAsync();
+
+        settings.DiscoverySubnet = "192.168.1.42/24; 10.20.30.*";
+
+        await service.SaveAsync(settings);
+        var loaded = await service.LoadAsync();
+
+        Assert.Equal("192.168.1.0/24, 10.20.30.0/24", loaded.DiscoverySubnet);
+    }
+
+    [Fact]
     public async Task LoadAsync_ShouldBackupCorruptSettingsAndCreateDefault()
     {
         var settingsPath = CreateTempSettingsPath();

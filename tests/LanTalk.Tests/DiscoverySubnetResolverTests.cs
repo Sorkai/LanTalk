@@ -40,6 +40,17 @@ public sealed class DiscoverySubnetResolverTests
     }
 
     [Fact]
+    public void GetBroadcastAddresses_ShouldResolveMultipleSubnets()
+    {
+        var addresses = DiscoverySubnetResolver.GetBroadcastAddresses("192.168.1.0/24, 10.20.30.*");
+
+        Assert.Collection(
+            addresses,
+            address => Assert.Equal("192.168.1.255", address.ToString()),
+            address => Assert.Equal("10.20.30.255", address.ToString()));
+    }
+
+    [Fact]
     public void TryGetBroadcastAddresses_ShouldRejectInvalidSubnet()
     {
         var ok = DiscoverySubnetResolver.TryGetBroadcastAddresses("192.168.1.0/99", out _);
