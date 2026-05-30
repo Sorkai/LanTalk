@@ -49,6 +49,23 @@ public sealed class SettingsServiceTests
     }
 
     [Fact]
+    public async Task SaveAsync_ShouldNormalizeUnsupportedThemeSettings()
+    {
+        var settingsPath = CreateTempSettingsPath();
+        var service = new SettingsService(new ConsoleLanTalkLogger(), settingsPath);
+        var settings = await service.LoadAsync();
+
+        settings.ThemeMode = "Avalonia.Controls.ComboBoxItem";
+        settings.ThemeColor = "Orange";
+
+        await service.SaveAsync(settings);
+        var loaded = await service.LoadAsync();
+
+        Assert.Equal("System", loaded.ThemeMode);
+        Assert.Equal("Blue", loaded.ThemeColor);
+    }
+
+    [Fact]
     public async Task LoadAsync_ShouldBackupCorruptSettingsAndCreateDefault()
     {
         var settingsPath = CreateTempSettingsPath();

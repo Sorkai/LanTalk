@@ -102,5 +102,19 @@ public sealed class SettingsService
                 "Downloads",
                 NetworkConstants.ApplicationFolderName);
         }
+
+        settings.ThemeMode = NormalizeValue(settings.ThemeMode, "System", "Light", "Dark");
+        settings.ThemeColor = NormalizeValue(settings.ThemeColor, "Blue", "Green", "Purple");
+    }
+
+    private static string NormalizeValue(string? value, string defaultValue, params string[] allowedValues)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return defaultValue;
+        }
+
+        var normalized = allowedValues.FirstOrDefault(item => string.Equals(item, value.Trim(), StringComparison.OrdinalIgnoreCase));
+        return normalized ?? defaultValue;
     }
 }

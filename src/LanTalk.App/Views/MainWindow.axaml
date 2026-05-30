@@ -111,7 +111,7 @@
                                                     Command="{Binding $parent[Window].DataContext.SelectUserCommand}"
                                                     CommandParameter="{Binding}">
                                                 <Grid ColumnDefinitions="36,*,Auto" ColumnSpacing="8">
-                                                    <Border Width="36" Height="36" CornerRadius="18" Background="#E1F0FF">
+                                                    <Border Width="36" Height="36" CornerRadius="18" Background="{StaticResource LanTalkAvatarBrush}">
                                                         <TextBlock Text="{Binding Initial}" Foreground="{StaticResource LanTalkBlueDarkBrush}" FontWeight="SemiBold" HorizontalAlignment="Center" VerticalAlignment="Center"/>
                                                     </Border>
                                                     <StackPanel Grid.Column="1" Spacing="2">
@@ -148,7 +148,7 @@
                                                     Command="{Binding $parent[Window].DataContext.SelectUserCommand}"
                                                     CommandParameter="{Binding}">
                                                 <Grid ColumnDefinitions="36,*,Auto" ColumnSpacing="8">
-                                                    <Border Width="36" Height="36" CornerRadius="18" Background="#EAF4FF">
+                                                    <Border Width="36" Height="36" CornerRadius="18" Background="{StaticResource LanTalkAvatarBrush}">
                                                         <TextBlock Text="{Binding Initial}" Foreground="{StaticResource LanTalkBlueDarkBrush}" FontWeight="SemiBold" HorizontalAlignment="Center" VerticalAlignment="Center"/>
                                                     </Border>
                                                     <StackPanel Grid.Column="1" Spacing="2">
@@ -168,7 +168,7 @@
                     </ScrollViewer>
 
                     <Border Grid.Row="4"
-                            Background="#E8F2FF"
+                            Background="{StaticResource LanTalkBroadcastBrush}"
                             BorderBrush="{StaticResource LanTalkBorderBrush}"
                             BorderThickness="1"
                             CornerRadius="8"

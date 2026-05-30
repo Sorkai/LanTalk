@@ -3,7 +3,7 @@
              xmlns:local="using:LanTalk.App"
              xmlns:suki="clr-namespace:SukiUI;assembly=SukiUI"
              x:Class="LanTalk.App.App"
-             RequestedThemeVariant="Light">
+             RequestedThemeVariant="Default">
 
     <Application.DataTemplates>
         <local:ViewLocator/>

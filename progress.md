@@ -262,3 +262,21 @@
   - 100MB 文件传输、传输中断、保存路径异常等实机验收。
   - 设置端口可修改并重启后生效。
   - 更新课堂演示文档和最终验收矩阵。
+
+### 阶段 10：主题模式切换修复
+- **状态：** 已完成
+- 本轮目标：
+  - 修复设置中选择 `Dark` / `Light` / `System` 后界面仍保持浅色的问题。
+  - 继续保证浅色、深色下文字和按钮可读。
+- 已执行操作：
+  - 将 `App.axaml` 的 `RequestedThemeVariant` 从固定 `Light` 改为 `Default`。
+  - 新增 `AppThemeService`，在启动加载设置和保存设置后应用 Avalonia 主题与 LanTalk 自定义色板。
+  - 将侧栏、主聊天区、设置面板、头像底色、广播提示、文件卡片等自定义颜色接入深浅色主题资源。
+  - 修复普通按钮在深色悬停/按下状态下前景色可能变黑的问题。
+  - 在 `SettingsService` 中规范化主题配置，避免旧配置再次保存成 `Avalonia.Controls.ComboBoxItem` 等非法值。
+  - 新增主题配置规范化单元测试。
+- 验证结果：
+  - `dotnet build LanTalk.sln -v:minimal`：0 警告，0 错误。
+  - `dotnet test LanTalk.sln -v:minimal`：14 个测试全部通过。
+  - 使用当前 `themeMode: Dark` 启动 Debug 版应用并截图，确认主界面与设置面板均切换为深色，文字、输入框、下拉框、按钮可读。
+  - `dotnet publish src/LanTalk.App/LanTalk.App.csproj -c Release -r win-x64 -p:PublishAot=true -v:minimal`：发布成功；仍仅保留既有 Avalonia DataGrid trim/AOT 分析警告。

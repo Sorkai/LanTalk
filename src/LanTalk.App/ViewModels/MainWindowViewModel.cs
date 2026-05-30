@@ -218,6 +218,7 @@ public sealed partial class MainWindowViewModel : ViewModelBase
         _settings.ThemeColor = Settings.ThemeColor;
 
         await _settingsService.SaveAsync(_settings);
+        AppThemeService.Apply(_settings);
         LocalNickname = _settings.Nickname;
         IsSettingsPaneOpen = false;
         StatusMessage = "设置已保存。";
@@ -401,6 +402,7 @@ public sealed partial class MainWindowViewModel : ViewModelBase
         try
         {
             _settings = await _settingsService.LoadAsync();
+            AppThemeService.Apply(_settings);
             LocalNickname = _settings.Nickname;
             LocalIpAddress = NetworkInterfaceHelper.GetLocalIpAddress();
             Settings = SettingsViewModel.FromSettings(_settings);

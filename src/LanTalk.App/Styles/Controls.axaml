@@ -18,12 +18,28 @@
         <Setter Property="Foreground" Value="{StaticResource LanTalkTextBrush}"/>
     </Style>
 
+    <Style Selector="Button:pointerover">
+        <Setter Property="Foreground" Value="{StaticResource LanTalkTextBrush}"/>
+    </Style>
+
+    <Style Selector="Button:pressed">
+        <Setter Property="Foreground" Value="{StaticResource LanTalkTextBrush}"/>
+    </Style>
+
     <Style Selector="Button.primary">
         <Setter Property="Background" Value="{StaticResource LanTalkBlueBrush}"/>
         <Setter Property="Foreground" Value="White"/>
         <Setter Property="CornerRadius" Value="6"/>
         <Setter Property="Padding" Value="16,8"/>
         <Setter Property="FontWeight" Value="SemiBold"/>
+    </Style>
+
+    <Style Selector="Button.primary:pointerover">
+        <Setter Property="Foreground" Value="White"/>
+    </Style>
+
+    <Style Selector="Button.primary:pressed">
+        <Setter Property="Foreground" Value="White"/>
     </Style>
 
     <Style Selector="Button.icon">

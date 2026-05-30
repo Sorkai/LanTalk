@@ -16,17 +16,16 @@
     </Style>
 
     <Style Selector="Border.broadcastBubble">
-        <Setter Property="Background" Value="#E8F2FF"/>
+        <Setter Property="Background" Value="{StaticResource LanTalkBroadcastBrush}"/>
         <Setter Property="BorderBrush" Value="{StaticResource LanTalkBlueBrush}"/>
         <Setter Property="BorderThickness" Value="1"/>
     </Style>
 
     <Style Selector="Border.fileCard">
-        <Setter Property="Background" Value="#F9FAFB"/>
+        <Setter Property="Background" Value="{StaticResource LanTalkFileCardBrush}"/>
         <Setter Property="BorderBrush" Value="{StaticResource LanTalkBorderBrush}"/>
         <Setter Property="BorderThickness" Value="1"/>
         <Setter Property="CornerRadius" Value="8"/>
         <Setter Property="Padding" Value="10"/>
     </Style>
 </Styles>
-

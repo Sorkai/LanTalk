@@ -9,6 +9,9 @@
         <Color x:Key="LanTalkTextColor">#1F2937</Color>
         <Color x:Key="LanTalkMutedTextColor">#6B7280</Color>
         <Color x:Key="LanTalkBorderColor">#D9E2EF</Color>
+        <Color x:Key="LanTalkAvatarColor">#E1F0FF</Color>
+        <Color x:Key="LanTalkBroadcastColor">#E8F2FF</Color>
+        <Color x:Key="LanTalkFileCardColor">#F9FAFB</Color>
         <SolidColorBrush x:Key="LanTalkBlueBrush" Color="{StaticResource LanTalkBlueColor}"/>
         <SolidColorBrush x:Key="LanTalkBlueDarkBrush" Color="{StaticResource LanTalkBlueDarkColor}"/>
         <SolidColorBrush x:Key="LanTalkSidebarBrush" Color="{StaticResource LanTalkSidebarColor}"/>
@@ -17,6 +20,8 @@
         <SolidColorBrush x:Key="LanTalkTextBrush" Color="{StaticResource LanTalkTextColor}"/>
         <SolidColorBrush x:Key="LanTalkMutedTextBrush" Color="{StaticResource LanTalkMutedTextColor}"/>
         <SolidColorBrush x:Key="LanTalkBorderBrush" Color="{StaticResource LanTalkBorderColor}"/>
+        <SolidColorBrush x:Key="LanTalkAvatarBrush" Color="{StaticResource LanTalkAvatarColor}"/>
+        <SolidColorBrush x:Key="LanTalkBroadcastBrush" Color="{StaticResource LanTalkBroadcastColor}"/>
+        <SolidColorBrush x:Key="LanTalkFileCardBrush" Color="{StaticResource LanTalkFileCardColor}"/>
     </Styles.Resources>
 </Styles>
-
