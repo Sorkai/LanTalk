@@ -13,6 +13,7 @@ namespace LanTalk.Core.Serialization;
 [JsonSerializable(typeof(ChatMessage))]
 [JsonSerializable(typeof(FileTransferRequest))]
 [JsonSerializable(typeof(FileTransferResponse))]
+[JsonSerializable(typeof(FileTransferFinished))]
 [JsonSerializable(typeof(FileTransferRecord))]
 [JsonSerializable(typeof(DiscoveryPayload))]
 [JsonSerializable(typeof(TextMessagePayload))]

@@ -64,6 +64,17 @@ public sealed class DiscoveryService : IAsyncDisposable
         }
     }
 
+    public async Task RefreshAsync(CancellationToken cancellationToken = default)
+    {
+        if (_settings is null)
+        {
+            return;
+        }
+
+        _registry.MarkStaleUsersOffline(DateTimeOffset.Now);
+        await SendDiscoveryPacketAsync(PacketType.Hello, cancellationToken).ConfigureAwait(false);
+    }
+
     private async Task RunHeartbeatAsync(CancellationToken cancellationToken)
     {
         while (!cancellationToken.IsCancellationRequested)

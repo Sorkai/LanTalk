@@ -41,6 +41,16 @@ public sealed partial class OnlineUserViewModel : ViewModelBase
         _ => "离线"
     };
 
+    partial void OnNicknameChanged(string value)
+    {
+        OnPropertyChanged(nameof(Initial));
+    }
+
+    partial void OnStatusChanged(UserStatus value)
+    {
+        OnPropertyChanged(nameof(StatusText));
+    }
+
     public static OnlineUserViewModel FromUser(UserInfo user)
     {
         return new OnlineUserViewModel

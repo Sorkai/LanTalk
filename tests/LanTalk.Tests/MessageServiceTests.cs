@@ -58,4 +58,53 @@ public sealed class MessageServiceTests
         Assert.Equal(PacketType.PrivateMessage, packet.Type);
         Assert.Equal("user-a", packet.FromUserId);
     }
+
+    [Fact]
+    public async Task MessageService_ShouldSendFileFinishedAndErrorPackets()
+    {
+        var logger = new ConsoleLanTalkLogger();
+        var service = new MessageService(new TcpMessageClient(), new TcpMessageServer(logger), logger);
+        var finishedReceived = new TaskCompletionSource<NetworkPacket>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var errorReceived = new TaskCompletionSource<NetworkPacket>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var port = Random.Shared.Next(56000, 59000);
+
+        service.PacketReceived += (_, packet) =>
+        {
+            if (packet.Type == PacketType.FileFinished)
+            {
+                finishedReceived.TrySetResult(packet);
+            }
+
+            if (packet.Type == PacketType.Error)
+            {
+                errorReceived.TrySetResult(packet);
+            }
+        };
+
+        await service.StartAsync(port);
+
+        var local = new AppSettings { UserId = "user-a" };
+        var receiver = new UserInfo
+        {
+            UserId = "user-b",
+            Nickname = "接收方",
+            IpAddress = "127.0.0.1",
+            MessagePort = port,
+            FilePort = port + 1,
+            Status = UserStatus.Online,
+            LastSeenTime = DateTimeOffset.Now
+        };
+
+        await service.SendFileFinishedAsync(local, receiver, "file-1");
+        var finishedCompleted = await Task.WhenAny(finishedReceived.Task, Task.Delay(TimeSpan.FromSeconds(3)));
+
+        await service.SendErrorAsync(local, receiver, new ErrorPayload("FILE_TRANSFER_FAILED", "失败", "file-1"));
+        var errorCompleted = await Task.WhenAny(errorReceived.Task, Task.Delay(TimeSpan.FromSeconds(3)));
+
+        await service.StopAsync();
+        await service.DisposeAsync();
+
+        Assert.Same(finishedReceived.Task, finishedCompleted);
+        Assert.Same(errorReceived.Task, errorCompleted);
+    }
 }

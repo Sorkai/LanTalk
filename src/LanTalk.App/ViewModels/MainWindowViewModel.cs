@@ -29,6 +29,7 @@ public sealed partial class MainWindowViewModel : ViewModelBase
     private readonly MessageService _messageService;
     private readonly FileTransferService _fileTransferService;
     private readonly FileTransferRepository _fileTransferRepository;
+    private readonly UserRepository _userRepository;
     private readonly TcpFileServer _fileServer;
     private readonly ILanTalkLogger _logger;
     private readonly Dictionary<string, FileTransferRequest> _pendingFileRequests = new(StringComparer.Ordinal);
@@ -37,6 +38,7 @@ public sealed partial class MainWindowViewModel : ViewModelBase
     private readonly Dictionary<string, ChatMessageViewModel> _outgoingFileMessages = new(StringComparer.Ordinal);
     private readonly Dictionary<string, ChatMessageViewModel> _incomingFileMessages = new(StringComparer.Ordinal);
     private readonly Dictionary<string, string> _incomingSavePaths = new(StringComparer.Ordinal);
+    private readonly HashSet<string> _incomingFinishedNotifications = new(StringComparer.Ordinal);
     private CancellationTokenSource? _fileServerCts;
     private Task? _fileServerTask;
     private AppSettings _settings = new();
@@ -61,7 +63,7 @@ public sealed partial class MainWindowViewModel : ViewModelBase
     private string currentSessionTitle = "请选择一个会话";
 
     [ObservableProperty]
-    private string currentSessionSubtitle = "局域网自动发现将在下一阶段接入";
+    private string currentSessionSubtitle = "启动后会自动发现同一局域网内的在线用户";
 
     [ObservableProperty]
     private string draftMessage = string.Empty;
@@ -102,12 +104,13 @@ public sealed partial class MainWindowViewModel : ViewModelBase
         _messageService = services.MessageService;
         _fileTransferService = services.FileTransferService;
         _fileTransferRepository = services.FileTransferRepository;
+        _userRepository = services.UserRepository;
         _fileServer = services.FileServer;
         _logger = services.Logger;
         _discoveryService.UsersChanged += OnDiscoveryUsersChanged;
         _messageService.PacketReceived += OnMessagePacketReceived;
 
-        LoadDesignData();
+        EnsureBroadcastSession();
         _ = InitializeAsync();
     }
 
@@ -123,6 +126,7 @@ public sealed partial class MainWindowViewModel : ViewModelBase
             ? "广播给当前所有在线用户"
             : $"{value.IpAddress} · {value.StatusText}";
         value.UnreadCount = 0;
+        UpsertRecentSession(value, moveToTop: true);
         _ = LoadSessionMessagesAsync(value);
     }
 
@@ -162,6 +166,7 @@ public sealed partial class MainWindowViewModel : ViewModelBase
 
         DraftMessage = string.Empty;
         Messages.Add(ToMessageViewModel(message, LocalNickname));
+        UpsertRecentSession(SelectedUser, content, moveToTop: true);
 
         if (_settings.SaveChatHistory)
         {
@@ -308,6 +313,21 @@ public sealed partial class MainWindowViewModel : ViewModelBase
     }
 
     [RelayCommand]
+    private async Task RefreshDiscoveryAsync()
+    {
+        try
+        {
+            await _discoveryService.RefreshAsync();
+            StatusMessage = "已重新广播上线消息，正在刷新局域网在线用户。";
+        }
+        catch (Exception ex)
+        {
+            _logger.Error("刷新局域网用户失败。", ex);
+            StatusMessage = $"刷新局域网用户失败：{ex.Message}";
+        }
+    }
+
+    [RelayCommand]
     private async Task AttachFileAsync()
     {
         if (SelectedUser is null || SelectedUser.UserId == NetworkConstants.BroadcastSessionId)
@@ -387,6 +407,7 @@ public sealed partial class MainWindowViewModel : ViewModelBase
 
             var initializer = new DatabaseInitializer(new SqliteConnectionFactory());
             await initializer.InitializeAsync();
+            await LoadKnownUsersAsync();
             await _discoveryService.StartAsync(_settings);
             await _messageService.StartAsync(_settings.MessagePort);
             StartFileServer();
@@ -419,22 +440,27 @@ public sealed partial class MainWindowViewModel : ViewModelBase
     {
         Dispatcher.UIThread.Post(() =>
         {
-            OnlineUsers.Clear();
-
             foreach (var user in users)
             {
-                OnlineUsers.Add(OnlineUserViewModel.FromUser(user));
+                var viewModel = UpsertOnlineUser(user);
+                if (viewModel.Status == UserStatus.Online && viewModel.LastMessage is "等待重新上线" or "已离线")
+                {
+                    viewModel.LastMessage = "可以开始聊天";
+                }
+
+                UpsertRecentSession(viewModel, viewModel.LastMessage, moveToTop: false);
             }
 
             OnPropertyChanged(nameof(OnlineCount));
+            _ = PersistKnownUsersAsync(users);
 
-            if (OnlineUsers.Count == 0)
+            if (OnlineCount == 0)
             {
                 StatusMessage = "UDP 自动发现已启动，暂未发现其他在线用户。";
             }
             else
             {
-                StatusMessage = $"已发现 {OnlineUsers.Count} 个局域网用户。";
+                StatusMessage = $"已发现 {OnlineCount} 个在线局域网用户。";
             }
         });
     }
@@ -469,6 +495,18 @@ public sealed partial class MainWindowViewModel : ViewModelBase
             return;
         }
 
+        if (packet.Type is PacketType.FileFinished)
+        {
+            await HandleFileFinishedAsync(packet);
+            return;
+        }
+
+        if (packet.Type is PacketType.Error)
+        {
+            await HandleErrorAsync(packet);
+            return;
+        }
+
         if (packet.Type is not (PacketType.PrivateMessage or PacketType.BroadcastMessage))
         {
             return;
@@ -483,6 +521,9 @@ public sealed partial class MainWindowViewModel : ViewModelBase
         var kind = packet.Type == PacketType.BroadcastMessage ? MessageKind.Broadcast : MessageKind.Private;
         var sessionId = kind == MessageKind.Broadcast ? NetworkConstants.BroadcastSessionId : packet.FromUserId;
         var senderName = ResolveUserName(packet.FromUserId);
+        var session = kind == MessageKind.Broadcast
+            ? EnsureBroadcastSession()
+            : EnsureUserSession(packet.FromUserId, senderName, "0.0.0.0");
         var message = new ChatMessage
         {
             MessageId = payload.MessageId,
@@ -506,14 +547,10 @@ public sealed partial class MainWindowViewModel : ViewModelBase
         }
         else
         {
-            var user = OnlineUsers.FirstOrDefault(user => user.UserId == packet.FromUserId);
-            if (user is not null)
-            {
-                user.UnreadCount++;
-                user.LastMessage = payload.Content;
-            }
+            session.UnreadCount++;
         }
 
+        UpsertRecentSession(session, payload.Content, moveToTop: true);
         StatusMessage = kind == MessageKind.Broadcast ? "收到一条广播消息。" : $"收到来自 {senderName} 的消息。";
     }
 
@@ -527,6 +564,7 @@ public sealed partial class MainWindowViewModel : ViewModelBase
 
         _pendingFileRequests[request.FileId] = request;
         var sender = ResolveUserName(packet.FromUserId);
+        var senderSession = EnsureUserSession(packet.FromUserId, sender, "0.0.0.0");
         var savePath = Path.Combine(_settings.FileSavePath, request.FileName);
 
         Directory.CreateDirectory(_settings.FileSavePath);
@@ -554,7 +592,16 @@ public sealed partial class MainWindowViewModel : ViewModelBase
             StatusText = "等待接收确认"
         };
 
-        Messages.Add(fileMessage);
+        if (SelectedUser?.UserId == request.SenderId)
+        {
+            Messages.Add(fileMessage);
+        }
+        else
+        {
+            senderSession.UnreadCount++;
+        }
+
+        UpsertRecentSession(senderSession, $"收到文件：{request.FileName}", moveToTop: true);
         _incomingFileMessages[request.FileId] = fileMessage;
         _incomingSavePaths[request.FileId] = savePath;
         PendingFileRequest = new FileReceiveRequestViewModel
@@ -612,9 +659,9 @@ public sealed partial class MainWindowViewModel : ViewModelBase
 
             await _fileTransferService.SendFileAsync(receiver.IpAddress, receiver.FilePort, response.FileId, path, progress);
             fileMessage.Progress = 100;
-            fileMessage.StatusText = "传输完成";
-            StatusMessage = $"文件已发送：{fileMessage.FileName}";
-            await SaveOutgoingFileStatusAsync(response.FileId, FileTransferStatus.Completed);
+            fileMessage.StatusText = "已发送，等待对方确认";
+            StatusMessage = $"文件已发送，等待对方确认：{fileMessage.FileName}";
+            await SaveOutgoingFileStatusAsync(response.FileId, FileTransferStatus.Transferring);
         }
         catch (Exception ex)
         {
@@ -622,84 +669,210 @@ public sealed partial class MainWindowViewModel : ViewModelBase
             fileMessage.StatusText = "传输失败";
             StatusMessage = $"文件传输失败：{ex.Message}";
             await SaveOutgoingFileStatusAsync(response.FileId, FileTransferStatus.Failed);
+
+            try
+            {
+                await _messageService.SendErrorAsync(
+                    _settings,
+                    receiver,
+                    new ErrorPayload("FILE_TRANSFER_FAILED", $"文件传输失败：{fileMessage.FileName}", response.FileId));
+            }
+            catch (Exception notifyEx)
+            {
+                _logger.Warning($"文件传输失败通知发送失败：{notifyEx.Message}");
+            }
         }
     }
 
-    private void LoadDesignData()
+    private async Task HandleFileFinishedAsync(NetworkPacket packet)
     {
-        _broadcastSession = new OnlineUserViewModel
+        var finished = System.Text.Json.JsonSerializer.Deserialize(packet.PayloadJson, LanTalkJsonContext.Default.FileTransferFinished);
+        if (finished is null)
         {
-            UserId = NetworkConstants.BroadcastSessionId,
-            Nickname = "全员广播",
-            IpAddress = "所有在线用户",
-            Status = UserStatus.Online,
-            LastMessage = "向局域网所有在线用户发送消息"
+            return;
+        }
+
+        if (_outgoingFileMessages.TryGetValue(finished.FileId, out var outgoingMessage))
+        {
+            outgoingMessage.Progress = 100;
+            outgoingMessage.StatusText = "对方已接收";
+            await SaveOutgoingFileStatusAsync(finished.FileId, FileTransferStatus.Completed);
+            StatusMessage = $"对方已确认接收文件：{outgoingMessage.FileName}";
+            return;
+        }
+
+        if (_incomingFileMessages.TryGetValue(finished.FileId, out var incomingMessage))
+        {
+            incomingMessage.Progress = 100;
+            incomingMessage.StatusText = "接收完成";
+            await SaveIncomingFileStatusAsync(finished.FileId, FileTransferStatus.Completed);
+            StatusMessage = $"文件接收完成：{incomingMessage.FileName}";
+        }
+    }
+
+    private async Task HandleErrorAsync(NetworkPacket packet)
+    {
+        var error = System.Text.Json.JsonSerializer.Deserialize(packet.PayloadJson, LanTalkJsonContext.Default.ErrorPayload);
+        if (error is null)
+        {
+            return;
+        }
+
+        if (!string.IsNullOrWhiteSpace(error.FileId))
+        {
+            if (_outgoingFileMessages.TryGetValue(error.FileId, out var outgoingMessage))
+            {
+                outgoingMessage.StatusText = "传输失败";
+                await SaveOutgoingFileStatusAsync(error.FileId, FileTransferStatus.Failed);
+            }
+
+            if (_incomingFileMessages.TryGetValue(error.FileId, out var incomingMessage))
+            {
+                incomingMessage.StatusText = "传输失败";
+                await SaveIncomingFileStatusAsync(error.FileId, FileTransferStatus.Failed);
+            }
+        }
+
+        StatusMessage = $"收到来自 {ResolveUserName(packet.FromUserId)} 的错误：{error.Message}";
+    }
+
+    private OnlineUserViewModel EnsureBroadcastSession()
+    {
+        if (_broadcastSession is null)
+        {
+            _broadcastSession = new OnlineUserViewModel
+            {
+                UserId = NetworkConstants.BroadcastSessionId,
+                Nickname = "全员广播",
+                IpAddress = "所有在线用户",
+                Status = UserStatus.Online,
+                LastMessage = "向局域网所有在线用户发送消息"
+            };
+        }
+
+        UpsertRecentSession(_broadcastSession, moveToTop: false);
+        return _broadcastSession;
+    }
+
+    private OnlineUserViewModel EnsureUserSession(string userId, string nickname, string ipAddress)
+    {
+        var existing = OnlineUsers.FirstOrDefault(user => user.UserId == userId);
+        if (existing is not null)
+        {
+            if (!string.IsNullOrWhiteSpace(nickname) && existing.Nickname != nickname)
+            {
+                existing.Nickname = nickname;
+            }
+
+            if (!string.IsNullOrWhiteSpace(ipAddress) && ipAddress != "0.0.0.0" && existing.IpAddress != ipAddress)
+            {
+                existing.IpAddress = ipAddress;
+            }
+
+            return existing;
+        }
+
+        var created = new OnlineUserViewModel
+        {
+            UserId = userId,
+            Nickname = string.IsNullOrWhiteSpace(nickname) ? userId : nickname,
+            IpAddress = ipAddress,
+            Status = UserStatus.Offline,
+            LastMessage = "已记录为已知联系人"
         };
 
-        RecentSessions.Add(_broadcastSession);
+        OnlineUsers.Add(created);
+        OnPropertyChanged(nameof(OnlineCount));
+        return created;
+    }
 
-        OnlineUsers.Add(new OnlineUserViewModel
+    private OnlineUserViewModel UpsertOnlineUser(UserInfo user)
+    {
+        var existing = OnlineUsers.FirstOrDefault(item => item.UserId == user.UserId);
+        if (existing is null)
         {
-            UserId = "u-alice",
-            Nickname = "张同学",
-            IpAddress = "192.168.1.24",
-            Status = UserStatus.Online,
-            LastMessage = "刚刚在线",
-            UnreadCount = 2
-        });
-        OnlineUsers.Add(new OnlineUserViewModel
-        {
-            UserId = "u-bob",
-            Nickname = "李老师",
-            IpAddress = "192.168.1.18",
-            Status = UserStatus.Online,
-            LastMessage = "实验室电脑",
-        });
-        OnlineUsers.Add(new OnlineUserViewModel
-        {
-            UserId = "u-lab",
-            Nickname = "机房演示机",
-            IpAddress = "192.168.1.42",
-            Status = UserStatus.Away,
-            LastMessage = "等待心跳更新"
-        });
+            existing = OnlineUserViewModel.FromUser(user);
+            OnlineUsers.Add(existing);
+            return existing;
+        }
 
-        RecentSessions.Add(OnlineUsers[0]);
-        RecentSessions.Add(OnlineUsers[1]);
+        existing.Nickname = user.Nickname;
+        existing.IpAddress = user.IpAddress;
+        existing.MessagePort = user.MessagePort;
+        existing.FilePort = user.FilePort;
+        existing.Status = user.Status;
 
-        SelectedUser = OnlineUsers[0];
-        Messages.Add(new ChatMessageViewModel
+        if (string.IsNullOrWhiteSpace(existing.LastMessage) ||
+            existing.LastMessage is "等待重新上线" or "已离线" or "可以开始聊天" or "已记录为已知联系人")
         {
-            SenderName = "张同学",
-            Content = "我这边已经打开 LanTalk，等 UDP 自动发现接入后就不用手动添加了。",
-            TimeText = "09:20",
-            Kind = MessageKind.Private
-        });
-        Messages.Add(new ChatMessageViewModel
+            existing.LastMessage = user.Status == UserStatus.Online ? "可以开始聊天" : "已离线";
+        }
+
+        return existing;
+    }
+
+    private void UpsertRecentSession(OnlineUserViewModel session, string? lastMessage = null, bool moveToTop = true)
+    {
+        if (!string.IsNullOrWhiteSpace(lastMessage))
         {
-            SenderName = "我",
-            Content = "收到。第一阶段先把界面、设置和项目骨架搭稳。",
-            TimeText = "09:21",
-            IsMine = true,
-            Kind = MessageKind.Private
-        });
-        Messages.Add(new ChatMessageViewModel
+            session.LastMessage = lastMessage;
+        }
+
+        var existing = RecentSessions.FirstOrDefault(item => item.UserId == session.UserId);
+        if (existing is not null)
         {
-            SenderName = "局域网通知",
-            Content = "广播消息会以独立样式展示，后续通过 TCP 发送到所有在线用户。",
-            TimeText = "09:22",
-            Kind = MessageKind.Broadcast
-        });
-        Messages.Add(new ChatMessageViewModel
+            var index = RecentSessions.IndexOf(existing);
+            if (moveToTop && index > 0)
+            {
+                RecentSessions.Move(index, 0);
+            }
+
+            return;
+        }
+
+        if (moveToTop)
         {
-            SenderName = "张同学",
-            Content = "文件消息会使用卡片样式，并显示传输进度。",
-            TimeText = "09:23",
-            Kind = MessageKind.File,
-            FileName = "项目说明文档.md",
-            FileSizeText = "32 KB",
-            Progress = 100
-        });
+            RecentSessions.Insert(0, session);
+        }
+        else
+        {
+            RecentSessions.Add(session);
+        }
+    }
+
+    private async Task LoadKnownUsersAsync()
+    {
+        var knownUsers = await _userRepository.LoadRecentAsync(20);
+        foreach (var knownUser in knownUsers.Where(user => user.UserId != _settings.UserId))
+        {
+            var offlineUser = new UserInfo
+            {
+                UserId = knownUser.UserId,
+                Nickname = knownUser.Nickname,
+                IpAddress = knownUser.IpAddress,
+                MessagePort = knownUser.MessagePort,
+                FilePort = knownUser.FilePort,
+                Status = UserStatus.Offline,
+                LastSeenTime = knownUser.LastSeenTime
+            };
+
+            var user = UpsertOnlineUser(offlineUser);
+            UpsertRecentSession(user, user.LastMessage, moveToTop: false);
+        }
+
+        OnPropertyChanged(nameof(OnlineCount));
+    }
+
+    private async Task PersistKnownUsersAsync(IEnumerable<UserInfo> users)
+    {
+        try
+        {
+            await _userRepository.SaveManyAsync(users.Where(user => user.UserId != _settings.UserId));
+        }
+        catch (Exception ex)
+        {
+            _logger.Error("保存已知用户失败。", ex);
+        }
     }
 
     private async Task LoadSessionMessagesAsync(OnlineUserViewModel user)
@@ -719,7 +892,7 @@ public sealed partial class MainWindowViewModel : ViewModelBase
                 Messages.Add(new ChatMessageViewModel
                 {
                     SenderName = "局域网广播",
-                    Content = "这里用于发送 MVP 的全员广播消息，不做复杂永久群聊。",
+                    Content = "这里用于向当前在线的局域网用户发送广播消息。",
                     TimeText = DateTimeOffset.Now.ToString("HH:mm"),
                     Kind = MessageKind.Broadcast
                 });
@@ -742,16 +915,8 @@ public sealed partial class MainWindowViewModel : ViewModelBase
         Messages.Add(new ChatMessageViewModel
         {
             SenderName = user.Nickname,
-            Content = $"这是与 {user.Nickname} 的静态会话预览。真实 TCP 私聊将在阶段 4 接入。",
-            TimeText = DateTimeOffset.Now.AddMinutes(-2).ToString("HH:mm"),
-            Kind = MessageKind.Private
-        });
-        Messages.Add(new ChatMessageViewModel
-        {
-            SenderName = LocalNickname,
-            Content = "当前界面已按 Telegram 风格组织，左侧会话与在线用户、右侧消息区与输入栏。",
+            Content = $"还没有和 {user.Nickname} 的聊天记录，可以直接发送第一条消息。",
             TimeText = DateTimeOffset.Now.ToString("HH:mm"),
-            IsMine = true,
             Kind = MessageKind.Private
         });
     }
@@ -804,20 +969,49 @@ public sealed partial class MainWindowViewModel : ViewModelBase
 
         if (progress >= 100 && _pendingFileRequests.TryGetValue(fileId, out var request))
         {
-            await _fileTransferRepository.SaveAsync(new FileTransferRecord
-            {
-                FileId = request.FileId,
-                SenderId = request.SenderId,
-                ReceiverId = request.ReceiverId,
-                FileName = request.FileName,
-                FileSize = request.FileSize,
-                SavePath = _incomingSavePaths.GetValueOrDefault(fileId),
-                Status = FileTransferStatus.Completed,
-                TransferTime = DateTimeOffset.Now
-            }, cancellationToken);
+            await SaveIncomingFileStatusAsync(fileId, FileTransferStatus.Completed, cancellationToken);
 
-            StatusMessage = $"文件接收完成：{request.FileName}";
+            UserInfo? sender = null;
+            await Dispatcher.UIThread.InvokeAsync(() =>
+            {
+                sender = OnlineUsers.FirstOrDefault(user => user.UserId == request.SenderId) is { } user
+                    ? ToUserInfo(user)
+                    : null;
+                StatusMessage = $"文件接收完成：{request.FileName}";
+            });
+
+            if (sender is not null && _incomingFinishedNotifications.Add(fileId))
+            {
+                try
+                {
+                    await _messageService.SendFileFinishedAsync(_settings, sender, fileId, cancellationToken);
+                }
+                catch (Exception ex)
+                {
+                    _logger.Warning($"文件完成确认发送失败：{ex.Message}");
+                }
+            }
         }
+    }
+
+    private async Task SaveIncomingFileStatusAsync(string fileId, FileTransferStatus status, CancellationToken cancellationToken = default)
+    {
+        if (!_pendingFileRequests.TryGetValue(fileId, out var request))
+        {
+            return;
+        }
+
+        await _fileTransferRepository.SaveAsync(new FileTransferRecord
+        {
+            FileId = request.FileId,
+            SenderId = request.SenderId,
+            ReceiverId = request.ReceiverId,
+            FileName = request.FileName,
+            FileSize = request.FileSize,
+            SavePath = _incomingSavePaths.GetValueOrDefault(fileId),
+            Status = status,
+            TransferTime = DateTimeOffset.Now
+        }, cancellationToken);
     }
 
     private async Task SaveOutgoingFileStatusAsync(string fileId, FileTransferStatus status)
@@ -842,11 +1036,11 @@ public sealed partial class MainWindowViewModel : ViewModelBase
         });
     }
 
-    private static ChatMessageViewModel ToMessageViewModel(ChatMessage message, string localNickname)
+    private static ChatMessageViewModel ToMessageViewModel(ChatMessage message, string senderName)
     {
         return new ChatMessageViewModel
         {
-            SenderName = message.IsMine ? localNickname : message.SenderId,
+            SenderName = senderName,
             Content = message.Content,
             TimeText = message.SendTime.ToString("HH:mm"),
             IsMine = message.IsMine,
@@ -884,10 +1078,11 @@ public sealed partial class MainWindowViewModel : ViewModelBase
         var discoveryService = new DiscoveryService(registry, discoveryServer, logger);
         var messageService = new MessageService(new TcpMessageClient(), new TcpMessageServer(logger), logger);
         var fileTransferRepository = new FileTransferRepository(connectionFactory);
+        var userRepository = new UserRepository(connectionFactory);
         var fileTransferService = new FileTransferService();
         var fileServer = new TcpFileServer(logger);
 
-        return new AppServices(settingsService, historyService, discoveryService, messageService, fileTransferService, fileTransferRepository, fileServer, logger);
+        return new AppServices(settingsService, historyService, discoveryService, messageService, fileTransferService, fileTransferRepository, userRepository, fileServer, logger);
     }
 
     private static async Task<string?> PickFileAsync()
@@ -930,5 +1125,6 @@ public sealed record AppServices(
     MessageService MessageService,
     FileTransferService FileTransferService,
     FileTransferRepository FileTransferRepository,
+    UserRepository UserRepository,
     TcpFileServer FileServer,
     ILanTalkLogger Logger);

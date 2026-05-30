@@ -231,3 +231,34 @@
 | 目标是什么？ | 构建一个可运行的 .NET 10 Avalonia/SukiUI 局域网 IM MVP，具备设置、发现、聊天、广播、文件传输、SQLite 历史和 AOT 友好结构。 |
 | 我学到了什么？ | 仓库当前只有项目文档，实现必须从项目初始化开始；详细内容见 `findings.md`。 |
 | 我做了什么？ | 完成 LanTalk MVP：设置、UDP 自动发现、TCP 私聊、广播、单文件流式传输、SQLite 记录、文档、测试、普通 Release 发布；安装 Windows linker 后 Native AOT 发布已通过，剩余 Avalonia DataGrid trim/AOT 警告待跟踪。 |
+
+## 会话：2026-05-30
+
+### 阶段 9：通信产品化补齐与真实会话整理
+- **状态：** 已完成
+- 本轮目标：
+  - 清理 UI 假数据和旧阶段文案。
+  - 建立真实最近会话更新机制。
+  - 修复消息显示昵称。
+  - 实现刷新重新发现。
+  - 增加 `KnownUsers` 持久化。
+  - 补齐 `FILE_FINISHED` / `ERROR` 控制消息链路。
+- 已执行操作：
+  - 移除运行时假用户、假消息和旧阶段提示文案，保留真实空状态提示。
+  - “刷新”按钮接入 `RefreshDiscoveryCommand`，调用 UDP 发现服务重新广播 `HELLO`。
+  - 发现用户、选择用户、收到私聊/广播/文件请求时会维护 `RecentSessions`。
+  - 历史消息和实时消息显示昵称，不再默认把非本机消息显示为 `UserId`。
+  - 新增 `UserRepository`，将发现到的用户写入 `KnownUsers`，启动时恢复已知联系人。
+  - 新增 `FileTransferFinished` 控制载荷，并补齐 `SendFileFinishedAsync` / `SendErrorAsync`。
+  - 接收端文件完成后向发送端回传 `FILE_FINISHED`，失败时可通过 `ERROR` 同步文件状态。
+  - 新增 `UserRepositoryTests` 与 `MessageService_ShouldSendFileFinishedAndErrorPackets`。
+  - 将设置面板的主题下拉项改为真实字符串，避免保存成 `Avalonia.Controls.ComboBoxItem`。
+  - 执行 `dotnet build LanTalk.sln -v:minimal`，0 警告 0 错误。
+  - 执行 `dotnet test LanTalk.sln -v:minimal`，13 个测试全部通过。
+  - 启动 Debug 版应用并截图检查，确认不再显示假用户和旧阶段提示。
+  - 执行 Native AOT 发布：`dotnet publish src/LanTalk.App/LanTalk.App.csproj -c Release -r win-x64 -p:PublishAot=true -v:minimal`，发布成功；仍有 Avalonia DataGrid 既有 trim/AOT 分析警告。
+- 后续保留待办：
+  - 双机/三机真实验收。
+  - 100MB 文件传输、传输中断、保存路径异常等实机验收。
+  - 设置端口可修改并重启后生效。
+  - 更新课堂演示文档和最终验收矩阵。

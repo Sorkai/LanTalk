@@ -197,6 +197,19 @@
 |------|----------|
 | 当前没有源码项目 | 计划从项目初始化和静态 UI 开始。 |
 
+## 2026-05-30 通信体检发现
+- 当前代码已存在真实 UDP/TCP 通信实现，不是纯静态 UI：
+  - `UdpDiscoveryServer` 使用 `UdpClient` 监听与广播发现包。
+  - `TcpMessageServer` / `TcpMessageClient` 使用 TCP 收发消息包。
+  - `TcpFileServer` / `TcpFileClient` 使用 TCP 流式传输文件。
+- 仍需补齐产品化细节：
+  - UI 残留阶段 1 假数据和旧阶段提示。
+  - 最近会话没有围绕真实发现用户和真实收发消息维护。
+  - 历史消息显示名称可能退化为 `UserId`。
+  - “刷新”按钮没有真实命令。
+  - `KnownUsers` 表已创建但没有仓储和使用链路。
+  - `FileFinished` / `Error` 协议枚举存在，但缺少完整发送和处理链路。
+
 ## 资源
 - `C:\pr\LanTalk\AGENTS.md`：主要 Agent / 项目规则。
 - `C:\pr\LanTalk\lan_talk_codex项目说明文档.md`：项目需求、架构、里程碑、验收要求。
@@ -207,4 +220,3 @@
 
 ## 视觉/浏览器发现
 - 规划阶段未使用浏览器或图片检查。
-

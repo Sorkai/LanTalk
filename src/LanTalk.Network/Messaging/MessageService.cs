@@ -86,6 +86,32 @@ public sealed class MessageService : IAsyncDisposable
         return _client.SendAsync(receiver.IpAddress, receiver.MessagePort, packet, cancellationToken);
     }
 
+    public Task SendFileFinishedAsync(AppSettings localSettings, UserInfo receiver, string fileId, CancellationToken cancellationToken = default)
+    {
+        var packet = new NetworkPacket
+        {
+            Type = PacketType.FileFinished,
+            FromUserId = localSettings.UserId,
+            ToUserId = receiver.UserId,
+            PayloadJson = JsonSerializer.Serialize(new FileTransferFinished(fileId), LanTalkJsonContext.Default.FileTransferFinished)
+        };
+
+        return _client.SendAsync(receiver.IpAddress, receiver.MessagePort, packet, cancellationToken);
+    }
+
+    public Task SendErrorAsync(AppSettings localSettings, UserInfo receiver, ErrorPayload error, CancellationToken cancellationToken = default)
+    {
+        var packet = new NetworkPacket
+        {
+            Type = PacketType.Error,
+            FromUserId = localSettings.UserId,
+            ToUserId = receiver.UserId,
+            PayloadJson = JsonSerializer.Serialize(error, LanTalkJsonContext.Default.ErrorPayload)
+        };
+
+        return _client.SendAsync(receiver.IpAddress, receiver.MessagePort, packet, cancellationToken);
+    }
+
     public async Task<BroadcastSendResult> BroadcastAsync(AppSettings localSettings, IEnumerable<UserInfo> receivers, string content, CancellationToken cancellationToken = default)
     {
         var success = 0;

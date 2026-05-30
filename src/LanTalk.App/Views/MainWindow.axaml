@@ -2,6 +2,7 @@
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:vm="using:LanTalk.App.ViewModels"
         xmlns:conv="using:LanTalk.App.Converters"
+        xmlns:sys="clr-namespace:System;assembly=System.Runtime"
         xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
         xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
         mc:Ignorable="d"
@@ -172,7 +173,7 @@
                             BorderThickness="1"
                             CornerRadius="8"
                             Padding="10">
-                        <TextBlock Text="阶段 1 使用假数据；UDP 自动发现将在阶段 3 替换在线列表。"
+                        <TextBlock Text="UDP 自动发现已启动；若暂未看到其他设备，可点击刷新重新广播上线消息。"
                                    Classes="caption"
                                    TextWrapping="Wrap"/>
                     </Border>
@@ -191,7 +192,7 @@
                             <TextBlock Text="{Binding CurrentSessionSubtitle}" Classes="caption"/>
                         </StackPanel>
                         <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="10" VerticalAlignment="Center">
-                            <Button Content="刷新" ToolTip.Tip="手动刷新在线用户将在 UDP 阶段接入"/>
+                            <Button Content="刷新" Command="{Binding RefreshDiscoveryCommand}" ToolTip.Tip="重新广播上线消息并刷新在线状态"/>
                             <Button Content="设置" Command="{Binding OpenSettingsCommand}"/>
                         </StackPanel>
                     </Grid>
@@ -300,18 +301,18 @@
                                 <StackPanel Spacing="6">
                                     <TextBlock Text="主题模式" FontWeight="SemiBold"/>
                                     <ComboBox SelectedItem="{Binding Settings.ThemeMode}">
-                                        <ComboBoxItem Content="System"/>
-                                        <ComboBoxItem Content="Light"/>
-                                        <ComboBoxItem Content="Dark"/>
+                                        <sys:String>System</sys:String>
+                                        <sys:String>Light</sys:String>
+                                        <sys:String>Dark</sys:String>
                                     </ComboBox>
                                 </StackPanel>
 
                                 <StackPanel Grid.Column="1" Spacing="6">
                                     <TextBlock Text="主题色" FontWeight="SemiBold"/>
                                     <ComboBox SelectedItem="{Binding Settings.ThemeColor}">
-                                        <ComboBoxItem Content="Blue"/>
-                                        <ComboBoxItem Content="Green"/>
-                                        <ComboBoxItem Content="Purple"/>
+                                        <sys:String>Blue</sys:String>
+                                        <sys:String>Green</sys:String>
+                                        <sys:String>Purple</sys:String>
                                     </ComboBox>
                                 </StackPanel>
                             </Grid>
