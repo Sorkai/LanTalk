@@ -72,6 +72,12 @@
         <Setter Property="Foreground" Value="{StaticResource LanTalkTextBrush}"/>
     </Style>
 
+    <Style Selector="NumericUpDown">
+        <Setter Property="Background" Value="{StaticResource LanTalkSurfaceBrush}"/>
+        <Setter Property="Foreground" Value="{StaticResource LanTalkTextBrush}"/>
+        <Setter Property="BorderBrush" Value="{StaticResource LanTalkBorderBrush}"/>
+    </Style>
+
     <Style Selector="CheckBox">
         <Setter Property="Foreground" Value="{StaticResource LanTalkTextBrush}"/>
     </Style>

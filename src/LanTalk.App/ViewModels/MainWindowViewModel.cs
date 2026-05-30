@@ -1,4 +1,6 @@
 using System.Collections.ObjectModel;
+using System.Net;
+using System.Net.Sockets;
 using Avalonia.Threading;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
@@ -87,6 +89,10 @@ public sealed partial class MainWindowViewModel : ViewModelBase
 
     public ObservableCollection<OnlineUserViewModel> RecentSessions { get; } = [];
 
+    public ObservableCollection<OnlineUserViewModel> FilteredOnlineUsers { get; } = [];
+
+    public ObservableCollection<OnlineUserViewModel> FilteredRecentSessions { get; } = [];
+
     public ObservableCollection<ChatMessageViewModel> Messages { get; } = [];
 
     public int OnlineCount => OnlineUsers.Count(user => user.Status == UserStatus.Online);
@@ -111,7 +117,13 @@ public sealed partial class MainWindowViewModel : ViewModelBase
         _messageService.PacketReceived += OnMessagePacketReceived;
 
         EnsureBroadcastSession();
+        RefreshFilteredUsers();
         _ = InitializeAsync();
+    }
+
+    partial void OnSearchTextChanged(string value)
+    {
+        RefreshFilteredUsers();
     }
 
     partial void OnSelectedUserChanged(OnlineUserViewModel? value)
@@ -211,17 +223,34 @@ public sealed partial class MainWindowViewModel : ViewModelBase
     [RelayCommand]
     private async Task SaveSettingsAsync()
     {
+        var validationError = ValidatePorts(Settings);
+        if (validationError is not null)
+        {
+            StatusMessage = validationError;
+            return;
+        }
+
+        var portsChanged =
+            _settings.UdpPort != Settings.UdpPort ||
+            _settings.MessagePort != Settings.MessagePort ||
+            _settings.FilePort != Settings.FilePort;
+
         _settings.Nickname = Settings.Nickname.Trim();
         _settings.FileSavePath = Settings.FileSavePath.Trim();
         _settings.SaveChatHistory = Settings.SaveChatHistory;
         _settings.ThemeMode = Settings.ThemeMode;
         _settings.ThemeColor = Settings.ThemeColor;
+        _settings.UdpPort = Settings.UdpPort;
+        _settings.MessagePort = Settings.MessagePort;
+        _settings.FilePort = Settings.FilePort;
 
         await _settingsService.SaveAsync(_settings);
         AppThemeService.Apply(_settings);
         LocalNickname = _settings.Nickname;
         IsSettingsPaneOpen = false;
-        StatusMessage = "设置已保存。";
+        StatusMessage = portsChanged
+            ? "设置已保存。端口变更将在重启 LanTalk 后生效。"
+            : "设置已保存。";
     }
 
     [RelayCommand]
@@ -397,6 +426,66 @@ public sealed partial class MainWindowViewModel : ViewModelBase
         }
     }
 
+    private static string? ValidatePorts(SettingsViewModel settings)
+    {
+        if (!IsUserPort(settings.UdpPort) ||
+            !IsUserPort(settings.MessagePort) ||
+            !IsUserPort(settings.FilePort))
+        {
+            return "端口必须在 1024 到 65535 之间。";
+        }
+
+        if (settings.UdpPort == settings.MessagePort ||
+            settings.UdpPort == settings.FilePort ||
+            settings.MessagePort == settings.FilePort)
+        {
+            return "UDP 自动发现、TCP 消息、TCP 文件端口不能重复。";
+        }
+
+        return null;
+    }
+
+    private static bool IsUserPort(int port)
+    {
+        return port is >= 1024 and <= 65535;
+    }
+
+    private static void EnsurePortsAvailable(AppSettings settings)
+    {
+        EnsureUdpPortAvailable(settings.UdpPort);
+        EnsureTcpPortAvailable(settings.MessagePort, "TCP 消息");
+        EnsureTcpPortAvailable(settings.FilePort, "TCP 文件");
+    }
+
+    private static void EnsureUdpPortAvailable(int port)
+    {
+        try
+        {
+            using var udpClient = new UdpClient(port);
+        }
+        catch (SocketException ex)
+        {
+            throw new InvalidOperationException($"UDP 自动发现端口 {port} 不可用：{ex.SocketErrorCode}", ex);
+        }
+    }
+
+    private static void EnsureTcpPortAvailable(int port, string name)
+    {
+        var listener = new TcpListener(IPAddress.Any, port);
+        try
+        {
+            listener.Start();
+        }
+        catch (SocketException ex)
+        {
+            throw new InvalidOperationException($"{name}端口 {port} 不可用：{ex.SocketErrorCode}", ex);
+        }
+        finally
+        {
+            listener.Stop();
+        }
+    }
+
     private async Task InitializeAsync()
     {
         try
@@ -405,11 +494,13 @@ public sealed partial class MainWindowViewModel : ViewModelBase
             AppThemeService.Apply(_settings);
             LocalNickname = _settings.Nickname;
             LocalIpAddress = NetworkInterfaceHelper.GetLocalIpAddress();
+            LocalStatusText = "在线";
             Settings = SettingsViewModel.FromSettings(_settings);
 
             var initializer = new DatabaseInitializer(new SqliteConnectionFactory());
             await initializer.InitializeAsync();
             await LoadKnownUsersAsync();
+            EnsurePortsAvailable(_settings);
             await _discoveryService.StartAsync(_settings);
             await _messageService.StartAsync(_settings.MessagePort);
             StartFileServer();
@@ -419,6 +510,7 @@ public sealed partial class MainWindowViewModel : ViewModelBase
         catch (Exception ex)
         {
             _logger.Error("初始化失败。", ex);
+            LocalStatusText = "异常";
             StatusMessage = $"初始化失败：{ex.Message}";
         }
     }
@@ -436,6 +528,7 @@ public sealed partial class MainWindowViewModel : ViewModelBase
 
         await _messageService.StopAsync().ConfigureAwait(false);
         await _discoveryService.StopAsync().ConfigureAwait(false);
+        await Dispatcher.UIThread.InvokeAsync(() => LocalStatusText = "离线");
     }
 
     private void OnDiscoveryUsersChanged(object? sender, IReadOnlyCollection<UserInfo> users)
@@ -454,6 +547,7 @@ public sealed partial class MainWindowViewModel : ViewModelBase
             }
 
             OnPropertyChanged(nameof(OnlineCount));
+            RefreshFilteredUsers();
             _ = PersistKnownUsersAsync(users);
 
             if (OnlineCount == 0)
@@ -569,7 +663,6 @@ public sealed partial class MainWindowViewModel : ViewModelBase
         var senderSession = EnsureUserSession(packet.FromUserId, sender, "0.0.0.0");
         var savePath = Path.Combine(_settings.FileSavePath, request.FileName);
 
-        Directory.CreateDirectory(_settings.FileSavePath);
         await _fileTransferRepository.SaveAsync(new FileTransferRecord
         {
             FileId = request.FileId,
@@ -771,6 +864,7 @@ public sealed partial class MainWindowViewModel : ViewModelBase
                 existing.IpAddress = ipAddress;
             }
 
+            RefreshFilteredUsers();
             return existing;
         }
 
@@ -785,6 +879,7 @@ public sealed partial class MainWindowViewModel : ViewModelBase
 
         OnlineUsers.Add(created);
         OnPropertyChanged(nameof(OnlineCount));
+        RefreshFilteredUsers();
         return created;
     }
 
@@ -795,6 +890,7 @@ public sealed partial class MainWindowViewModel : ViewModelBase
         {
             existing = OnlineUserViewModel.FromUser(user);
             OnlineUsers.Add(existing);
+            RefreshFilteredUsers();
             return existing;
         }
 
@@ -810,6 +906,7 @@ public sealed partial class MainWindowViewModel : ViewModelBase
             existing.LastMessage = user.Status == UserStatus.Online ? "可以开始聊天" : "已离线";
         }
 
+        RefreshFilteredUsers();
         return existing;
     }
 
@@ -829,6 +926,7 @@ public sealed partial class MainWindowViewModel : ViewModelBase
                 RecentSessions.Move(index, 0);
             }
 
+            RefreshFilteredUsers();
             return;
         }
 
@@ -840,6 +938,8 @@ public sealed partial class MainWindowViewModel : ViewModelBase
         {
             RecentSessions.Add(session);
         }
+
+        RefreshFilteredUsers();
     }
 
     private async Task LoadKnownUsersAsync()
@@ -863,6 +963,43 @@ public sealed partial class MainWindowViewModel : ViewModelBase
         }
 
         OnPropertyChanged(nameof(OnlineCount));
+        RefreshFilteredUsers();
+    }
+
+    private void RefreshFilteredUsers()
+    {
+        var query = SearchText.Trim();
+        ReplaceCollection(FilteredRecentSessions, RecentSessions.Where(user => MatchesSearch(user, query)));
+        ReplaceCollection(FilteredOnlineUsers, OnlineUsers.Where(user => MatchesSearch(user, query)));
+    }
+
+    private static bool MatchesSearch(OnlineUserViewModel user, string query)
+    {
+        if (string.IsNullOrWhiteSpace(query))
+        {
+            return true;
+        }
+
+        return ContainsIgnoreCase(user.Nickname, query) ||
+            ContainsIgnoreCase(user.IpAddress, query) ||
+            ContainsIgnoreCase(user.LastMessage, query) ||
+            ContainsIgnoreCase(user.StatusText, query);
+    }
+
+    private static bool ContainsIgnoreCase(string value, string query)
+    {
+        return value.Contains(query, StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static void ReplaceCollection(
+        ObservableCollection<OnlineUserViewModel> target,
+        IEnumerable<OnlineUserViewModel> source)
+    {
+        target.Clear();
+        foreach (var item in source)
+        {
+            target.Add(item);
+        }
     }
 
     private async Task PersistKnownUsersAsync(IEnumerable<UserInfo> users)
@@ -938,24 +1075,35 @@ public sealed partial class MainWindowViewModel : ViewModelBase
             _fileServerCts.Token));
     }
 
-    private Task<Stream> CreateReceiveFileStreamAsync(string fileId, long fileSize, CancellationToken cancellationToken)
+    private async Task<Stream> CreateReceiveFileStreamAsync(string fileId, long fileSize, CancellationToken cancellationToken)
     {
-        Directory.CreateDirectory(_settings.FileSavePath);
         var request = _pendingFileRequests.GetValueOrDefault(fileId);
         var fileName = request?.FileName ?? $"{fileId}.bin";
         var savePath = _incomingSavePaths.GetValueOrDefault(fileId) ?? Path.Combine(_settings.FileSavePath, fileName);
         _incomingSavePaths[fileId] = savePath;
 
-        if (_incomingFileMessages.TryGetValue(fileId, out var message))
+        try
         {
-            Dispatcher.UIThread.Post(() =>
-            {
-                message.StatusText = "正在接收";
-                message.Progress = 0;
-            });
-        }
+            Directory.CreateDirectory(_settings.FileSavePath);
+            var stream = File.Create(savePath);
 
-        return Task.FromResult<Stream>(File.Create(savePath));
+            if (_incomingFileMessages.TryGetValue(fileId, out var message))
+            {
+                await Dispatcher.UIThread.InvokeAsync(() =>
+                {
+                    message.StatusText = "正在接收";
+                    message.Progress = 0;
+                });
+            }
+
+            return stream;
+        }
+        catch (Exception ex) when (IsFileSaveException(ex))
+        {
+            _logger.Error("文件保存失败。", ex);
+            await MarkIncomingFileFailedAsync(fileId, $"文件保存失败：{ex.Message}", cancellationToken);
+            throw;
+        }
     }
 
     private async Task UpdateReceiveProgressAsync(string fileId, double progress, CancellationToken cancellationToken)
@@ -994,6 +1142,53 @@ public sealed partial class MainWindowViewModel : ViewModelBase
                 }
             }
         }
+    }
+
+    private async Task MarkIncomingFileFailedAsync(string fileId, string statusText, CancellationToken cancellationToken)
+    {
+        UserInfo? sender = null;
+        await Dispatcher.UIThread.InvokeAsync(() =>
+        {
+            if (_incomingFileMessages.TryGetValue(fileId, out var message))
+            {
+                message.Progress = 0;
+                message.StatusText = "保存失败";
+            }
+
+            if (_pendingFileRequests.TryGetValue(fileId, out var request))
+            {
+                sender = OnlineUsers.FirstOrDefault(user => user.UserId == request.SenderId) is { } user
+                    ? ToUserInfo(user)
+                    : null;
+            }
+
+            StatusMessage = statusText;
+        });
+
+        await SaveIncomingFileStatusAsync(fileId, FileTransferStatus.Failed, cancellationToken);
+
+        if (sender is null)
+        {
+            return;
+        }
+
+        try
+        {
+            await _messageService.SendErrorAsync(
+                _settings,
+                sender,
+                new ErrorPayload("FILE_SAVE_FAILED", statusText, fileId),
+                cancellationToken);
+        }
+        catch (Exception ex)
+        {
+            _logger.Warning($"文件保存失败通知发送失败：{ex.Message}");
+        }
+    }
+
+    private static bool IsFileSaveException(Exception ex)
+    {
+        return ex is IOException or UnauthorizedAccessException or DirectoryNotFoundException or NotSupportedException or ArgumentException;
     }
 
     private async Task SaveIncomingFileStatusAsync(string fileId, FileTransferStatus status, CancellationToken cancellationToken = default)

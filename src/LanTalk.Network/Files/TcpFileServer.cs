@@ -51,48 +51,57 @@ public sealed class TcpFileServer
     {
         using (client)
         {
-            await using var networkStream = client.GetStream();
-            var lengthBuffer = new byte[sizeof(int)];
-            await networkStream.ReadExactlyAsync(lengthBuffer, cancellationToken).ConfigureAwait(false);
-            var fileIdLength = BitConverter.ToInt32(lengthBuffer);
-            var fileIdBuffer = new byte[fileIdLength];
-            await networkStream.ReadExactlyAsync(fileIdBuffer, cancellationToken).ConfigureAwait(false);
-            var fileId = Encoding.UTF8.GetString(fileIdBuffer);
-
-            var sizeBuffer = new byte[sizeof(long)];
-            await networkStream.ReadExactlyAsync(sizeBuffer, cancellationToken).ConfigureAwait(false);
-            var fileSize = BitConverter.ToInt64(sizeBuffer);
-
-            await using var destination = await createDestination(fileId, fileSize, cancellationToken).ConfigureAwait(false);
-            var buffer = ArrayPool<byte>.Shared.Rent(NetworkConstants.FileTransferBufferSize);
-            long received = 0;
-
             try
             {
-                while (received < fileSize)
+                await using var networkStream = client.GetStream();
+                var lengthBuffer = new byte[sizeof(int)];
+                await networkStream.ReadExactlyAsync(lengthBuffer, cancellationToken).ConfigureAwait(false);
+                var fileIdLength = BitConverter.ToInt32(lengthBuffer);
+                var fileIdBuffer = new byte[fileIdLength];
+                await networkStream.ReadExactlyAsync(fileIdBuffer, cancellationToken).ConfigureAwait(false);
+                var fileId = Encoding.UTF8.GetString(fileIdBuffer);
+
+                var sizeBuffer = new byte[sizeof(long)];
+                await networkStream.ReadExactlyAsync(sizeBuffer, cancellationToken).ConfigureAwait(false);
+                var fileSize = BitConverter.ToInt64(sizeBuffer);
+
+                await using var destination = await createDestination(fileId, fileSize, cancellationToken).ConfigureAwait(false);
+                var buffer = ArrayPool<byte>.Shared.Rent(NetworkConstants.FileTransferBufferSize);
+                long received = 0;
+
+                try
                 {
-                    var remaining = fileSize - received;
-                    var readSize = (int)Math.Min(buffer.Length, remaining);
-                    var read = await networkStream.ReadAsync(buffer.AsMemory(0, readSize), cancellationToken).ConfigureAwait(false);
-                    if (read == 0)
+                    while (received < fileSize)
                     {
-                        throw new IOException("文件传输被中断。");
-                    }
+                        var remaining = fileSize - received;
+                        var readSize = (int)Math.Min(buffer.Length, remaining);
+                        var read = await networkStream.ReadAsync(buffer.AsMemory(0, readSize), cancellationToken).ConfigureAwait(false);
+                        if (read == 0)
+                        {
+                            throw new IOException("文件传输被中断。");
+                        }
 
-                    await destination.WriteAsync(buffer.AsMemory(0, read), cancellationToken).ConfigureAwait(false);
-                    received += read;
+                        await destination.WriteAsync(buffer.AsMemory(0, read), cancellationToken).ConfigureAwait(false);
+                        received += read;
 
-                    if (onProgress is not null)
-                    {
-                        await onProgress(fileId, fileSize == 0 ? 100 : received * 100d / fileSize, cancellationToken).ConfigureAwait(false);
+                        if (onProgress is not null)
+                        {
+                            await onProgress(fileId, fileSize == 0 ? 100 : received * 100d / fileSize, cancellationToken).ConfigureAwait(false);
+                        }
                     }
                 }
+                finally
+                {
+                    ArrayPool<byte>.Shared.Return(buffer);
+                }
             }
-            finally
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
             {
-                ArrayPool<byte>.Shared.Return(buffer);
+            }
+            catch (Exception ex)
+            {
+                _logger.Error("TCP 文件接收失败。", ex);
             }
         }
     }
 }
-

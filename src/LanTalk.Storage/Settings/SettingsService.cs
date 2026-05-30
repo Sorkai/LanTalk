@@ -105,6 +105,18 @@ public sealed class SettingsService
 
         settings.ThemeMode = NormalizeValue(settings.ThemeMode, "System", "Light", "Dark");
         settings.ThemeColor = NormalizeValue(settings.ThemeColor, "Blue", "Green", "Purple");
+        settings.UdpPort = NormalizePort(settings.UdpPort, NetworkConstants.DefaultUdpPort);
+        settings.MessagePort = NormalizePort(settings.MessagePort, NetworkConstants.DefaultMessagePort);
+        settings.FilePort = NormalizePort(settings.FilePort, NetworkConstants.DefaultFilePort);
+
+        if (settings.UdpPort == settings.MessagePort ||
+            settings.UdpPort == settings.FilePort ||
+            settings.MessagePort == settings.FilePort)
+        {
+            settings.UdpPort = NetworkConstants.DefaultUdpPort;
+            settings.MessagePort = NetworkConstants.DefaultMessagePort;
+            settings.FilePort = NetworkConstants.DefaultFilePort;
+        }
     }
 
     private static string NormalizeValue(string? value, string defaultValue, params string[] allowedValues)
@@ -116,5 +128,10 @@ public sealed class SettingsService
 
         var normalized = allowedValues.FirstOrDefault(item => string.Equals(item, value.Trim(), StringComparison.OrdinalIgnoreCase));
         return normalized ?? defaultValue;
+    }
+
+    private static int NormalizePort(int value, int defaultValue)
+    {
+        return value is >= 1024 and <= 65535 ? value : defaultValue;
     }
 }

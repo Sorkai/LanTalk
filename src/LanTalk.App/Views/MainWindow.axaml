@@ -69,7 +69,11 @@
                             </Border>
                             <StackPanel Grid.Column="1" Spacing="2" VerticalAlignment="Center">
                                 <TextBlock Text="{Binding LocalNickname}" FontWeight="SemiBold" TextTrimming="CharacterEllipsis"/>
-                                <TextBlock Text="{Binding LocalIpAddress}" Classes="caption"/>
+                                <StackPanel Orientation="Horizontal" Spacing="6">
+                                    <TextBlock Text="{Binding LocalIpAddress}" Classes="caption"/>
+                                    <TextBlock Text="·" Classes="caption"/>
+                                    <TextBlock Text="{Binding LocalStatusText}" Classes="caption"/>
+                                </StackPanel>
                             </StackPanel>
                             <Button Grid.Column="2"
                                     Classes="icon"
@@ -99,9 +103,9 @@
                             <StackPanel Spacing="8">
                                 <Grid ColumnDefinitions="*,Auto">
                                     <TextBlock Text="最近会话" Classes="caption" FontWeight="SemiBold"/>
-                                    <TextBlock Grid.Column="1" Text="{Binding RecentSessions.Count}" Classes="caption"/>
+                                    <TextBlock Grid.Column="1" Text="{Binding FilteredRecentSessions.Count}" Classes="caption"/>
                                 </Grid>
-                                <ItemsControl ItemsSource="{Binding RecentSessions}">
+                                <ItemsControl ItemsSource="{Binding FilteredRecentSessions}">
                                     <ItemsControl.ItemTemplate>
                                         <DataTemplate x:DataType="vm:OnlineUserViewModel">
                                             <Button HorizontalAlignment="Stretch"
@@ -138,7 +142,7 @@
                                     <TextBlock Text="在线用户" Classes="caption" FontWeight="SemiBold"/>
                                     <TextBlock Grid.Column="1" Text="{Binding OnlineCount}" Classes="caption"/>
                                 </Grid>
-                                <ItemsControl ItemsSource="{Binding OnlineUsers}">
+                                <ItemsControl ItemsSource="{Binding FilteredOnlineUsers}">
                                     <ItemsControl.ItemTemplate>
                                         <DataTemplate x:DataType="vm:OnlineUserViewModel">
                                             <Button HorizontalAlignment="Stretch"
@@ -318,11 +322,35 @@
                             </Grid>
 
                             <Border Background="{StaticResource LanTalkSidebarBrush}" CornerRadius="8" Padding="12">
-                                <StackPanel Spacing="6">
+                                <StackPanel Spacing="8">
                                     <TextBlock Text="网络端口" FontWeight="SemiBold"/>
-                                    <TextBlock Text="{Binding Settings.UdpPort, StringFormat='UDP 自动发现：{0}'}" Classes="caption"/>
-                                    <TextBlock Text="{Binding Settings.MessagePort, StringFormat='TCP 消息：{0}'}" Classes="caption"/>
-                                    <TextBlock Text="{Binding Settings.FilePort, StringFormat='TCP 文件：{0}'}" Classes="caption"/>
+                                    <Grid ColumnDefinitions="120,*" RowDefinitions="Auto,Auto,Auto" RowSpacing="8" ColumnSpacing="12">
+                                        <TextBlock Text="UDP 自动发现" Classes="caption" VerticalAlignment="Center"/>
+                                        <NumericUpDown Grid.Column="1"
+                                                       Minimum="1024"
+                                                       Maximum="65535"
+                                                       Increment="1"
+                                                       Value="{Binding Settings.UdpPort}"/>
+
+                                        <TextBlock Grid.Row="1" Text="TCP 消息" Classes="caption" VerticalAlignment="Center"/>
+                                        <NumericUpDown Grid.Row="1"
+                                                       Grid.Column="1"
+                                                       Minimum="1024"
+                                                       Maximum="65535"
+                                                       Increment="1"
+                                                       Value="{Binding Settings.MessagePort}"/>
+
+                                        <TextBlock Grid.Row="2" Text="TCP 文件" Classes="caption" VerticalAlignment="Center"/>
+                                        <NumericUpDown Grid.Row="2"
+                                                       Grid.Column="1"
+                                                       Minimum="1024"
+                                                       Maximum="65535"
+                                                       Increment="1"
+                                                       Value="{Binding Settings.FilePort}"/>
+                                    </Grid>
+                                    <TextBlock Text="端口保存后需要重启 LanTalk 才会重新监听。"
+                                               Classes="caption"
+                                               TextWrapping="Wrap"/>
                                 </StackPanel>
                             </Border>
                         </StackPanel>

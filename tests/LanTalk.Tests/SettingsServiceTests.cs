@@ -1,3 +1,4 @@
+using LanTalk.Core.Constants;
 using LanTalk.Core.Services;
 using LanTalk.Storage.Settings;
 
@@ -63,6 +64,44 @@ public sealed class SettingsServiceTests
 
         Assert.Equal("System", loaded.ThemeMode);
         Assert.Equal("Blue", loaded.ThemeColor);
+    }
+
+    [Fact]
+    public async Task SaveAsync_ShouldNormalizeInvalidPorts()
+    {
+        var settingsPath = CreateTempSettingsPath();
+        var service = new SettingsService(new ConsoleLanTalkLogger(), settingsPath);
+        var settings = await service.LoadAsync();
+
+        settings.UdpPort = 80;
+        settings.MessagePort = 70000;
+        settings.FilePort = -1;
+
+        await service.SaveAsync(settings);
+        var loaded = await service.LoadAsync();
+
+        Assert.Equal(NetworkConstants.DefaultUdpPort, loaded.UdpPort);
+        Assert.Equal(NetworkConstants.DefaultMessagePort, loaded.MessagePort);
+        Assert.Equal(NetworkConstants.DefaultFilePort, loaded.FilePort);
+    }
+
+    [Fact]
+    public async Task SaveAsync_ShouldNormalizeDuplicatePorts()
+    {
+        var settingsPath = CreateTempSettingsPath();
+        var service = new SettingsService(new ConsoleLanTalkLogger(), settingsPath);
+        var settings = await service.LoadAsync();
+
+        settings.UdpPort = 50010;
+        settings.MessagePort = 50010;
+        settings.FilePort = 50012;
+
+        await service.SaveAsync(settings);
+        var loaded = await service.LoadAsync();
+
+        Assert.Equal(NetworkConstants.DefaultUdpPort, loaded.UdpPort);
+        Assert.Equal(NetworkConstants.DefaultMessagePort, loaded.MessagePort);
+        Assert.Equal(NetworkConstants.DefaultFilePort, loaded.FilePort);
     }
 
     [Fact]
