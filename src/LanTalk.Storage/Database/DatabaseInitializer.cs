@@ -24,6 +24,7 @@ public sealed class DatabaseInitializer
         }
 
         await EnsureKnownUsersDepartmentColumnAsync(connection, cancellationToken).ConfigureAwait(false);
+        await EnsureFileTransfersBatchColumnsAsync(connection, cancellationToken).ConfigureAwait(false);
         await EnsureOutgoingDeliveriesSourcePathColumnAsync(connection, cancellationToken).ConfigureAwait(false);
         await EnsureOutgoingDeliveriesRequiresEncryptionColumnAsync(connection, cancellationToken).ConfigureAwait(false);
     }
@@ -85,6 +86,53 @@ public sealed class DatabaseInitializer
         await alterCommand.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
     }
 
+    private static async Task EnsureFileTransfersBatchColumnsAsync(SqliteConnection connection, CancellationToken cancellationToken)
+    {
+        var columns = await LoadColumnNamesAsync(connection, "FileTransfers", cancellationToken).ConfigureAwait(false);
+
+        if (!columns.Contains("TransferKind"))
+        {
+            await AddColumnAsync(connection, "FileTransfers", "TransferKind TEXT NOT NULL DEFAULT 'SingleFile'", cancellationToken).ConfigureAwait(false);
+        }
+
+        if (!columns.Contains("BatchId"))
+        {
+            await AddColumnAsync(connection, "FileTransfers", "BatchId TEXT", cancellationToken).ConfigureAwait(false);
+        }
+
+        if (!columns.Contains("RelativePath"))
+        {
+            await AddColumnAsync(connection, "FileTransfers", "RelativePath TEXT", cancellationToken).ConfigureAwait(false);
+        }
+
+        if (!columns.Contains("BytesTransferred"))
+        {
+            await AddColumnAsync(connection, "FileTransfers", "BytesTransferred INTEGER NOT NULL DEFAULT 0", cancellationToken).ConfigureAwait(false);
+        }
+    }
+
+    private static async Task<HashSet<string>> LoadColumnNamesAsync(SqliteConnection connection, string tableName, CancellationToken cancellationToken)
+    {
+        await using var command = connection.CreateCommand();
+        command.CommandText = $"PRAGMA table_info({tableName});";
+
+        var columns = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
+        while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false))
+        {
+            columns.Add(reader.GetString(1));
+        }
+
+        return columns;
+    }
+
+    private static async Task AddColumnAsync(SqliteConnection connection, string tableName, string columnDefinition, CancellationToken cancellationToken)
+    {
+        await using var alterCommand = connection.CreateCommand();
+        alterCommand.CommandText = $"ALTER TABLE {tableName} ADD COLUMN {columnDefinition};";
+        await alterCommand.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
+    }
+
     private static readonly string[] CreateStatements =
     [
         """
@@ -119,6 +167,10 @@ public sealed class DatabaseInitializer
             FileName TEXT NOT NULL,
             FileSize INTEGER NOT NULL,
             SavePath TEXT,
+            TransferKind TEXT NOT NULL DEFAULT 'SingleFile',
+            BatchId TEXT,
+            RelativePath TEXT,
+            BytesTransferred INTEGER NOT NULL DEFAULT 0,
             Status TEXT NOT NULL,
             TransferTime TEXT NOT NULL
         );

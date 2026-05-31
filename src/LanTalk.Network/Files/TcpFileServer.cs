@@ -9,6 +9,9 @@ namespace LanTalk.Network.Files;
 
 public sealed class TcpFileServer
 {
+    private const int FileStreamHeaderMarker = -1;
+    private const int FileStreamHeaderVersion = 2;
+    private const int MaxFileIdLength = 512;
     private readonly ILanTalkLogger _logger;
 
     public TcpFileServer(ILanTalkLogger logger)
@@ -18,7 +21,7 @@ public sealed class TcpFileServer
 
     public async Task StartAsync(
         int port,
-        Func<string, long, CancellationToken, Task<Stream>> createDestination,
+        Func<string, long, long, CancellationToken, Task<Stream>> createDestination,
         Func<string, double, CancellationToken, Task>? onProgress,
         CancellationToken cancellationToken)
     {
@@ -45,7 +48,7 @@ public sealed class TcpFileServer
 
     private async Task HandleClientAsync(
         TcpClient client,
-        Func<string, long, CancellationToken, Task<Stream>> createDestination,
+        Func<string, long, long, CancellationToken, Task<Stream>> createDestination,
         Func<string, double, CancellationToken, Task>? onProgress,
         CancellationToken cancellationToken)
     {
@@ -56,7 +59,32 @@ public sealed class TcpFileServer
                 await using var networkStream = client.GetStream();
                 var lengthBuffer = new byte[sizeof(int)];
                 await networkStream.ReadExactlyAsync(lengthBuffer, cancellationToken).ConfigureAwait(false);
-                var fileIdLength = BitConverter.ToInt32(lengthBuffer);
+                var firstInt = BitConverter.ToInt32(lengthBuffer);
+                long resumeOffset = 0;
+
+                int fileIdLength;
+                if (firstInt == FileStreamHeaderMarker)
+                {
+                    await networkStream.ReadExactlyAsync(lengthBuffer, cancellationToken).ConfigureAwait(false);
+                    var version = BitConverter.ToInt32(lengthBuffer);
+                    if (version != FileStreamHeaderVersion)
+                    {
+                        throw new IOException($"不支持的文件流协议版本：{version}。");
+                    }
+
+                    await networkStream.ReadExactlyAsync(lengthBuffer, cancellationToken).ConfigureAwait(false);
+                    fileIdLength = BitConverter.ToInt32(lengthBuffer);
+                }
+                else
+                {
+                    fileIdLength = firstInt;
+                }
+
+                if (fileIdLength <= 0 || fileIdLength > MaxFileIdLength)
+                {
+                    throw new IOException("文件流协议中的 FileId 长度无效。");
+                }
+
                 var fileIdBuffer = new byte[fileIdLength];
                 await networkStream.ReadExactlyAsync(fileIdBuffer, cancellationToken).ConfigureAwait(false);
                 var fileId = Encoding.UTF8.GetString(fileIdBuffer);
@@ -65,9 +93,25 @@ public sealed class TcpFileServer
                 await networkStream.ReadExactlyAsync(sizeBuffer, cancellationToken).ConfigureAwait(false);
                 var fileSize = BitConverter.ToInt64(sizeBuffer);
 
-                await using var destination = await createDestination(fileId, fileSize, cancellationToken).ConfigureAwait(false);
+                if (firstInt == FileStreamHeaderMarker)
+                {
+                    await networkStream.ReadExactlyAsync(sizeBuffer, cancellationToken).ConfigureAwait(false);
+                    resumeOffset = BitConverter.ToInt64(sizeBuffer);
+                }
+
+                if (fileSize < 0 || resumeOffset < 0 || resumeOffset > fileSize)
+                {
+                    throw new IOException("文件流协议中的文件大小或续传偏移量无效。");
+                }
+
+                await using var destination = await createDestination(fileId, fileSize, resumeOffset, cancellationToken).ConfigureAwait(false);
                 var buffer = ArrayPool<byte>.Shared.Rent(NetworkConstants.FileTransferBufferSize);
-                long received = 0;
+                long received = resumeOffset;
+
+                if (onProgress is not null)
+                {
+                    await onProgress(fileId, fileSize == 0 ? 100 : received * 100d / fileSize, cancellationToken).ConfigureAwait(false);
+                }
 
                 try
                 {

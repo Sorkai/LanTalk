@@ -16,8 +16,15 @@ public sealed class FileTransferRecord
 
     public string? SavePath { get; init; }
 
+    public FileTransferKind TransferKind { get; init; } = FileTransferKind.SingleFile;
+
+    public string? BatchId { get; init; }
+
+    public string? RelativePath { get; init; }
+
+    public long BytesTransferred { get; init; }
+
     public FileTransferStatus Status { get; init; }
 
     public DateTimeOffset TransferTime { get; init; } = DateTimeOffset.Now;
 }
-

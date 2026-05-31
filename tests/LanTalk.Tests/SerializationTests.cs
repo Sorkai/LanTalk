@@ -124,6 +124,59 @@ public sealed class SerializationTests
     }
 
     [Fact]
+    public void FileTransferRequest_ShouldRoundTripBatchItems()
+    {
+        var request = new FileTransferRequest(
+            "batch-a",
+            "资料包",
+            4096,
+            "user-a",
+            "user-b",
+            50002,
+            TransferKind: FileTransferKind.Folder,
+            BatchId: "batch-a",
+            BatchName: "资料包",
+            Items:
+            [
+                new FileTransferItem("dir-a", "docs", "docs", 0, true),
+                new FileTransferItem("file-a", "readme.txt", @"docs\readme.txt", 4096)
+            ]);
+
+        var json = JsonSerializer.Serialize(request, LanTalkJsonContext.Default.FileTransferRequest);
+        var restored = JsonSerializer.Deserialize(json, LanTalkJsonContext.Default.FileTransferRequest);
+
+        Assert.NotNull(restored);
+        Assert.True(restored.IsBatchTransfer);
+        Assert.Equal(FileTransferKind.Folder, restored.TransferKind);
+        Assert.Equal("batch-a", restored.BatchId);
+        Assert.Equal("资料包", restored.BatchName);
+        Assert.Equal(2, restored.TransferItems.Count);
+        Assert.Contains(restored.TransferItems, item => item.IsDirectory && item.RelativePath == "docs");
+        Assert.Contains(restored.TransferItems, item => item.FileId == "file-a" && item.FileSize == 4096);
+    }
+
+    [Fact]
+    public void FileTransferResponse_ShouldRoundTripResumeOffsets()
+    {
+        var response = new FileTransferResponse(
+            "batch-a",
+            true,
+            ResumeItems:
+            [
+                new FileTransferResumeItem("file-a", 1024),
+                new FileTransferResumeItem("file-b", 0)
+            ]);
+
+        var json = JsonSerializer.Serialize(response, LanTalkJsonContext.Default.FileTransferResponse);
+        var restored = JsonSerializer.Deserialize(json, LanTalkJsonContext.Default.FileTransferResponse);
+
+        Assert.NotNull(restored);
+        Assert.True(restored.Accepted);
+        Assert.Equal(2, restored.ResumeItems?.Count);
+        Assert.Contains(restored.ResumeItems ?? [], item => item.FileId == "file-a" && item.Offset == 1024);
+    }
+
+    [Fact]
     public void ImageMessageContent_ShouldRoundTrip()
     {
         var content = new ImageMessageContent("file-a", "photo.png", 1024, @"C:\Temp\photo.png");

@@ -111,4 +111,55 @@ public sealed class DatabaseInitializerTests
         SqliteConnection.ClearAllPools();
         File.Delete(databasePath);
     }
+
+    [Fact]
+    public async Task InitializeAsync_ShouldMigrateFileTransferBatchColumns()
+    {
+        var databasePath = Path.Combine(Path.GetTempPath(), $"lantalk-migrate-filetransfers-{Guid.NewGuid():N}.db");
+        var factory = new SqliteConnectionFactory(databasePath);
+
+        await using (var connection = factory.CreateConnection())
+        {
+            await connection.OpenAsync();
+            await using var command = connection.CreateCommand();
+            command.CommandText =
+                """
+                CREATE TABLE FileTransfers (
+                    FileId TEXT PRIMARY KEY,
+                    SenderId TEXT NOT NULL,
+                    ReceiverId TEXT NOT NULL,
+                    FileName TEXT NOT NULL,
+                    FileSize INTEGER NOT NULL,
+                    SavePath TEXT,
+                    Status TEXT NOT NULL,
+                    TransferTime TEXT NOT NULL
+                );
+                """;
+            await command.ExecuteNonQueryAsync();
+        }
+
+        var initializer = new DatabaseInitializer(factory);
+        await initializer.InitializeAsync();
+
+        var columns = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        await using (var verifyConnection = factory.CreateConnection())
+        {
+            await verifyConnection.OpenAsync();
+            await using var verifyCommand = verifyConnection.CreateCommand();
+            verifyCommand.CommandText = "PRAGMA table_info(FileTransfers);";
+
+            await using var reader = await verifyCommand.ExecuteReaderAsync();
+            while (await reader.ReadAsync())
+            {
+                columns.Add(reader.GetString(1));
+            }
+        }
+
+        Assert.Contains("TransferKind", columns);
+        Assert.Contains("BatchId", columns);
+        Assert.Contains("RelativePath", columns);
+        Assert.Contains("BytesTransferred", columns);
+        SqliteConnection.ClearAllPools();
+        File.Delete(databasePath);
+    }
 }

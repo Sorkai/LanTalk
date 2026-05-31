@@ -45,6 +45,9 @@ public sealed partial class MainWindowViewModel : ViewModelBase
     private readonly Dictionary<string, UserInfo> _outgoingFileReceivers = new(StringComparer.Ordinal);
     private readonly Dictionary<string, ChatMessageViewModel> _outgoingFileMessages = new(StringComparer.Ordinal);
     private readonly Dictionary<string, GroupFileTransferState> _outgoingGroupFileStates = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, OutgoingBatchTransfer> _outgoingBatchTransfers = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, FileBatchTransferState> _outgoingBatchStates = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, FileBatchTransferState> _incomingBatchStates = new(StringComparer.Ordinal);
     private readonly Dictionary<string, ChatMessageViewModel> _incomingFileMessages = new(StringComparer.Ordinal);
     private readonly Dictionary<string, string> _incomingSavePaths = new(StringComparer.Ordinal);
     private readonly HashSet<string> _incomingFinishedNotifications = new(StringComparer.Ordinal);
@@ -676,6 +679,17 @@ public sealed partial class MainWindowViewModel : ViewModelBase
         var fileMessage = _incomingFileMessages[request.FileId];
         fileMessage.StatusText = "已接受，等待传输";
 
+        if (request.IsBatchTransfer)
+        {
+            await AcceptBatchFileRequestAsync(request, sender, fileMessage);
+            IsFileRequestPaneOpen = false;
+            return;
+        }
+
+        Directory.CreateDirectory(Path.GetDirectoryName(savePath) ?? _settings.FileSavePath);
+        var resumeOffset = GetResumeOffset(savePath, request.FileSize);
+        fileMessage.StatusText = resumeOffset > 0 ? "已接受，等待断点续传" : "已接受，等待传输";
+
         await _fileTransferRepository.SaveAsync(new FileTransferRecord
         {
             FileId = request.FileId,
@@ -684,11 +698,15 @@ public sealed partial class MainWindowViewModel : ViewModelBase
             FileName = request.FileName,
             FileSize = request.FileSize,
             SavePath = savePath,
+            TransferKind = request.TransferKind,
+            BatchId = request.BatchId,
+            RelativePath = request.RelativePath,
+            BytesTransferred = resumeOffset,
             Status = FileTransferStatus.Accepted,
             TransferTime = DateTimeOffset.Now
         });
 
-        await _messageService.SendFileResponseAsync(_settings, ToUserInfo(sender), new FileTransferResponse(request.FileId, true));
+        await _messageService.SendFileResponseAsync(_settings, ToUserInfo(sender), new FileTransferResponse(request.FileId, true, ResumeOffset: resumeOffset));
         StatusMessage = $"已接受文件：{request.FileName}";
         IsFileRequestPaneOpen = false;
     }
@@ -711,6 +729,14 @@ public sealed partial class MainWindowViewModel : ViewModelBase
         if (_incomingFileMessages.TryGetValue(request.FileId, out var fileMessage))
         {
             fileMessage.StatusText = "已拒绝";
+        }
+
+        if (request.IsBatchTransfer)
+        {
+            await RejectBatchFileRequestAsync(request);
+            StatusMessage = $"已拒绝{GetTransferKindText(request.TransferKind)}：{request.FileName}";
+            IsFileRequestPaneOpen = false;
+            return;
         }
 
         await _fileTransferRepository.SaveAsync(new FileTransferRecord
@@ -958,13 +984,48 @@ public sealed partial class MainWindowViewModel : ViewModelBase
             return;
         }
 
-        var selectedPath = await PickFileAsync();
+        var selectedPaths = await PickFilesAsync();
+        if (selectedPaths.Count == 0)
+        {
+            return;
+        }
+
+        if (selectedPaths.Count == 1)
+        {
+            await SendSelectedFileAsync(selectedPaths[0], isImage: false);
+            return;
+        }
+
+        await SendSelectedFileBatchAsync(
+            selectedPaths.Select(path => new FileInfo(path)).Where(file => file.Exists).ToArray(),
+            FileTransferKind.MultipleFiles,
+            "多文件",
+            rootFolderPath: null);
+    }
+
+    [RelayCommand]
+    private async Task AttachFolderAsync()
+    {
+        if (SelectedUser is null || SelectedUser.UserId == NetworkConstants.BroadcastSessionId)
+        {
+            StatusMessage = "请先选择一个用户或群组再发送文件夹。";
+            return;
+        }
+
+        var selectedPath = await PickFolderAsync();
         if (string.IsNullOrWhiteSpace(selectedPath))
         {
             return;
         }
 
-        await SendSelectedFileAsync(selectedPath, isImage: false);
+        var directoryInfo = new DirectoryInfo(selectedPath);
+        if (!directoryInfo.Exists)
+        {
+            StatusMessage = "文件夹不存在。";
+            return;
+        }
+
+        await SendSelectedFolderAsync(directoryInfo);
     }
 
     [RelayCommand]
@@ -1077,6 +1138,226 @@ public sealed partial class MainWindowViewModel : ViewModelBase
             fileMessage.StatusText = "发送请求失败";
             StatusMessage = isImage ? $"图片请求发送失败：{ex.Message}" : $"文件请求发送失败：{ex.Message}";
         }
+    }
+
+    private async Task SendSelectedFolderAsync(DirectoryInfo directoryInfo)
+    {
+        try
+        {
+            var files = directoryInfo
+                .EnumerateFiles("*", SearchOption.AllDirectories)
+                .OrderBy(file => file.FullName, StringComparer.OrdinalIgnoreCase)
+                .ToArray();
+            var directories = directoryInfo
+                .EnumerateDirectories("*", SearchOption.AllDirectories)
+                .OrderBy(directory => directory.FullName, StringComparer.OrdinalIgnoreCase)
+                .ToArray();
+
+            await SendSelectedFileBatchAsync(files, FileTransferKind.Folder, directoryInfo.Name, directoryInfo.FullName, directories);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            _logger.Error("读取文件夹失败。", ex);
+            StatusMessage = $"读取文件夹失败：{ex.Message}";
+        }
+    }
+
+    private async Task SendSelectedFileBatchAsync(
+        IReadOnlyList<FileInfo> files,
+        FileTransferKind transferKind,
+        string batchName,
+        string? rootFolderPath,
+        IReadOnlyList<DirectoryInfo>? directories = null)
+    {
+        if (SelectedUser is null)
+        {
+            return;
+        }
+
+        var localItems = CreateLocalTransferItems(files, transferKind, rootFolderPath, directories);
+        var fileCount = localItems.Count(item => !item.IsDirectory);
+        if (fileCount == 0 && transferKind != FileTransferKind.Folder)
+        {
+            StatusMessage = "没有可发送的文件。";
+            return;
+        }
+
+        if (transferKind == FileTransferKind.Folder && fileCount == 0 && localItems.Count == 0)
+        {
+            StatusMessage = "文件夹为空，将发送空文件夹。";
+        }
+
+        if (SelectedUser.IsGroupSession)
+        {
+            await SendSelectedGroupBatchAsync(SelectedUser, localItems, transferKind, batchName, rootFolderPath);
+            return;
+        }
+
+        await SendSelectedUserBatchAsync(SelectedUser, localItems, transferKind, batchName);
+    }
+
+    private async Task SendSelectedUserBatchAsync(
+        OnlineUserViewModel selectedUser,
+        IReadOnlyList<LocalTransferItem> localItems,
+        FileTransferKind transferKind,
+        string batchName)
+    {
+        var receiver = ToUserInfo(selectedUser);
+        var batchId = Guid.NewGuid().ToString("N");
+        var fileItems = localItems.Select(item => item.ToTransferItem()).ToArray();
+        var files = localItems.Where(item => !item.IsDirectory).ToArray();
+        var totalSize = files.Sum(item => item.FileSize);
+        var displayName = BuildBatchDisplayName(transferKind, batchName, files.Length);
+        var fileMessage = CreateBatchMessage(displayName, transferKind, files.Length, totalSize, isMine: true);
+        var state = new FileBatchTransferState(fileMessage, files.Length, totalSize, transferKind, isSender: true);
+
+        Messages.Add(fileMessage);
+        UpsertRecentSession(selectedUser, BuildBatchRecentText(transferKind, displayName), moveToTop: true);
+
+        await SaveBatchRecordAsync(batchId, receiver.UserId, displayName, totalSize, transferKind, batchId, null, FileTransferStatus.Pending);
+        var batchItems = new List<OutgoingBatchItem>();
+        foreach (var item in files)
+        {
+            RegisterOutgoingBatchItem(item, receiver, fileMessage, state);
+            batchItems.Add(new OutgoingBatchItem(item.FileId, item.SourcePath, item.FileName, item.RelativePath, item.FileSize));
+            await SaveBatchRecordAsync(item.FileId, receiver.UserId, item.FileName, item.FileSize, transferKind, batchId, item.RelativePath, FileTransferStatus.Pending);
+        }
+
+        _outgoingFileMessages[batchId] = fileMessage;
+        _outgoingFileReceivers[batchId] = receiver;
+        _outgoingBatchTransfers[batchId] = new OutgoingBatchTransfer(batchId, receiver, batchItems, fileMessage, state, transferKind);
+
+        var request = new FileTransferRequest(
+            batchId,
+            displayName,
+            totalSize,
+            _settings.UserId,
+            receiver.UserId,
+            _settings.FilePort,
+            IsImage: false,
+            TransferKind: transferKind,
+            BatchId: batchId,
+            BatchName: displayName,
+            Items: fileItems);
+
+        try
+        {
+            await _messageService.SendFileRequestAsync(_settings, receiver, request);
+            fileMessage.StatusText = "批量请求已发送";
+            StatusMessage = $"{GetTransferKindText(transferKind)}请求已发送。接收方同意后开始传输。";
+        }
+        catch (Exception ex)
+        {
+            _logger.Error($"{GetTransferKindText(transferKind)}请求发送失败。", ex);
+            fileMessage.StatusText = "发送请求失败";
+            await SaveBatchRecordAsync(batchId, receiver.UserId, displayName, totalSize, transferKind, batchId, null, FileTransferStatus.Failed);
+            StatusMessage = $"{GetTransferKindText(transferKind)}请求发送失败：{ex.Message}";
+        }
+    }
+
+    private async Task SendSelectedGroupBatchAsync(
+        OnlineUserViewModel group,
+        IReadOnlyList<LocalTransferItem> localItems,
+        FileTransferKind transferKind,
+        string batchName,
+        string? rootFolderPath)
+    {
+        var memberIds = group.GroupMemberIds
+            .Where(id => !string.IsNullOrWhiteSpace(id))
+            .Distinct(StringComparer.Ordinal)
+            .ToArray();
+        var recipientIds = memberIds
+            .Where(id => id != _settings.UserId)
+            .ToArray();
+        if (recipientIds.Length == 0)
+        {
+            StatusMessage = $"群组“{group.Nickname}”没有其他成员可接收{GetTransferKindText(transferKind)}。";
+            return;
+        }
+
+        var files = localItems.Where(item => !item.IsDirectory).ToArray();
+        var totalSize = files.Sum(item => item.FileSize);
+        var totalFileDeliveries = files.Length * recipientIds.Length;
+        var totalBytes = totalSize * recipientIds.Length;
+        var displayName = BuildBatchDisplayName(transferKind, batchName, files.Length);
+        var fileMessage = CreateBatchMessage(displayName, transferKind, files.Length, totalSize, isMine: true);
+        fileMessage.StatusText = $"准备发送给 {recipientIds.Length} 个成员";
+        var state = new FileBatchTransferState(fileMessage, totalFileDeliveries, totalBytes, transferKind, isSender: true);
+
+        Messages.Add(fileMessage);
+        UpsertRecentSession(group, BuildBatchRecentText(transferKind, displayName), moveToTop: true);
+
+        var onlineReceivers = ResolveGroupReceivers(group)
+            .Where(user => user.Status == UserStatus.Online)
+            .ToDictionary(user => user.UserId, StringComparer.Ordinal);
+        var success = 0;
+        var queued = 0;
+        var failed = 0;
+        var groupMessageId = Guid.NewGuid().ToString("N");
+
+        foreach (var recipientId in recipientIds)
+        {
+            var batchId = Guid.NewGuid().ToString("N");
+            var clonedItems = CloneTransferItemsForRecipient(localItems);
+            var sourceMap = BuildSourceMap(clonedItems);
+            var request = new FileTransferRequest(
+                batchId,
+                displayName,
+                totalSize,
+                _settings.UserId,
+                recipientId,
+                _settings.FilePort,
+                IsImage: false,
+                GroupId: group.UserId,
+                GroupName: group.Nickname,
+                GroupKind: group.GroupKind,
+                GroupMemberUserIds: memberIds,
+                GroupMessageId: groupMessageId,
+                TransferKind: transferKind,
+                BatchId: batchId,
+                BatchName: displayName,
+                Items: clonedItems.Select(item => item.ToTransferItem()).ToArray());
+
+            var receiver = onlineReceivers.TryGetValue(recipientId, out var onlineReceiver)
+                ? onlineReceiver
+                : ResolveKnownUserInfo(recipientId);
+
+            var outgoingItems = new List<OutgoingBatchItem>();
+            foreach (var item in clonedItems.Where(item => !item.IsDirectory))
+            {
+                RegisterOutgoingBatchItem(item, receiver, fileMessage, state);
+                outgoingItems.Add(new OutgoingBatchItem(item.FileId, item.SourcePath, item.FileName, item.RelativePath, item.FileSize));
+                await SaveBatchRecordAsync(item.FileId, recipientId, item.FileName, item.FileSize, transferKind, batchId, item.RelativePath, FileTransferStatus.Pending);
+            }
+
+            _outgoingFileMessages[batchId] = fileMessage;
+            _outgoingFileReceivers[batchId] = receiver;
+            _outgoingBatchTransfers[batchId] = new OutgoingBatchTransfer(batchId, receiver, outgoingItems, fileMessage, state, transferKind);
+
+            if (!onlineReceivers.TryGetValue(recipientId, out var onlineUser))
+            {
+                await QueueGroupBatchDeliveryAsync(recipientId, request, sourceMap, "成员当前离线，等待重新上线后补发。");
+                queued++;
+                continue;
+            }
+
+            try
+            {
+                await _messageService.SendFileRequestAsync(_settings, onlineUser, request);
+                success++;
+            }
+            catch (Exception ex)
+            {
+                failed++;
+                await QueueGroupBatchDeliveryAsync(recipientId, request, sourceMap, ex.Message);
+                _logger.Warning($"群组{GetTransferKindText(transferKind)}请求发送给 {onlineUser.Nickname}({onlineUser.IpAddress}) 失败，已加入离线补发队列：{ex.Message}");
+            }
+        }
+
+        state.Apply();
+        StatusMessage = queued == 0 && failed == 0
+            ? $"群组{GetTransferKindText(transferKind)}请求已发送给 {success} 个在线成员。"
+            : $"群组{GetTransferKindText(transferKind)}请求已发送 {success} 人，离线补发 {queued + failed} 人。";
     }
 
     private async Task SendSelectedGroupFileAsync(OnlineUserViewModel group, string selectedPath, FileInfo fileInfo, bool isImage)
@@ -1551,6 +1832,12 @@ public sealed partial class MainWindowViewModel : ViewModelBase
             return;
         }
 
+        if (request.IsBatchTransfer)
+        {
+            await HandleBatchFileRequestAsync(packet, request);
+            return;
+        }
+
         var isImage = request.IsImage || IsImageFileName(request.FileName);
         _pendingFileRequests[request.FileId] = request;
         var sender = ResolveUserName(packet.FromUserId);
@@ -1583,7 +1870,7 @@ public sealed partial class MainWindowViewModel : ViewModelBase
             });
         }
 
-        var savePath = Path.Combine(_settings.FileSavePath, request.FileName);
+        var savePath = Path.Combine(_settings.FileSavePath, ToSafePathSegment(request.FileName));
 
         await _fileTransferRepository.SaveAsync(new FileTransferRecord
         {
@@ -1666,11 +1953,253 @@ public sealed partial class MainWindowViewModel : ViewModelBase
             session.UserId);
     }
 
+    private async Task HandleBatchFileRequestAsync(NetworkPacket packet, FileTransferRequest request)
+    {
+        var sender = ResolveUserName(packet.FromUserId);
+        var session = request.IsGroupTransfer
+            ? EnsureGroupSession(new ChatGroup
+            {
+                GroupId = request.GroupId!,
+                Name = string.IsNullOrWhiteSpace(request.GroupName) ? "未命名群组" : request.GroupName,
+                Kind = request.GroupKind,
+                MemberUserIds = (request.GroupMemberUserIds ?? [])
+                    .Append(_settings.UserId)
+                    .Append(request.SenderId)
+                    .Where(id => !string.IsNullOrWhiteSpace(id))
+                    .Distinct(StringComparer.Ordinal)
+                    .ToArray(),
+                CreatedTime = DateTimeOffset.Now,
+                UpdatedTime = DateTimeOffset.Now
+            })
+            : EnsureUserSession(packet.FromUserId, sender, "0.0.0.0");
+        if (request.IsGroupTransfer && request.GroupKind == GroupKind.Permanent)
+        {
+            await _groupRepository.SaveAsync(new ChatGroup
+            {
+                GroupId = request.GroupId!,
+                Name = string.IsNullOrWhiteSpace(request.GroupName) ? "未命名群组" : request.GroupName,
+                Kind = request.GroupKind,
+                MemberUserIds = session.GroupMemberIds.ToArray(),
+                CreatedTime = DateTimeOffset.Now,
+                UpdatedTime = DateTimeOffset.Now
+            });
+        }
+
+        var items = request.TransferItems.ToArray();
+        var fileItems = items.Where(item => !item.IsDirectory).ToArray();
+        var totalSize = fileItems.Sum(item => item.FileSize);
+        var displayName = string.IsNullOrWhiteSpace(request.BatchName) ? request.FileName : request.BatchName;
+        var saveRoot = BuildIncomingBatchRootPath(request, displayName);
+
+        foreach (var item in items)
+        {
+            if (!TryNormalizeTransferRelativePath(item.RelativePath, item.IsDirectory, out _, out var error))
+            {
+                var senderUser = OnlineUsers.FirstOrDefault(user => user.UserId == request.SenderId);
+                if (senderUser is not null)
+                {
+                    await _messageService.SendFileResponseAsync(
+                        _settings,
+                        ToUserInfo(senderUser),
+                        new FileTransferResponse(request.FileId, false, $"包含不安全路径，已拒绝：{error}"));
+                }
+
+                StatusMessage = $"{GetTransferKindText(request.TransferKind)}包含不安全路径，已拒绝。";
+                return;
+            }
+        }
+
+        await SaveBatchRecordAsync(
+            request.FileId,
+            request.SenderId,
+            request.ReceiverId,
+            displayName,
+            totalSize,
+            request.TransferKind,
+            request.FileId,
+            null,
+            FileTransferStatus.Pending,
+            saveRoot);
+
+        var fileMessage = CreateBatchMessage(displayName, request.TransferKind, fileItems.Length, totalSize, isMine: false, sender);
+        var state = new FileBatchTransferState(fileMessage, fileItems.Length, totalSize, request.TransferKind, isSender: false);
+
+        if (SelectedUser?.UserId == session.UserId)
+        {
+            Messages.Add(fileMessage);
+        }
+        else
+        {
+            session.UnreadCount++;
+            RefreshUnreadState();
+        }
+
+        UpsertRecentSession(session, BuildIncomingBatchRecentText(request.TransferKind, displayName), moveToTop: true);
+        RefreshUnreadState();
+
+        _pendingFileRequests[request.FileId] = request;
+        _incomingFileMessages[request.FileId] = fileMessage;
+        _incomingSavePaths[request.FileId] = saveRoot;
+        _incomingBatchStates[request.FileId] = state;
+
+        foreach (var item in items)
+        {
+            TryNormalizeTransferRelativePath(item.RelativePath, item.IsDirectory, out var safeRelativePath, out _);
+            var itemSavePath = Path.Combine(saveRoot, safeRelativePath);
+            if (item.IsDirectory)
+            {
+                continue;
+            }
+
+            var itemRequest = request with
+            {
+                FileId = item.FileId,
+                FileName = item.FileName,
+                FileSize = item.FileSize,
+                RelativePath = safeRelativePath,
+                Items = null
+            };
+            _pendingFileRequests[item.FileId] = itemRequest;
+            _incomingFileMessages[item.FileId] = fileMessage;
+            _incomingSavePaths[item.FileId] = itemSavePath;
+            _incomingBatchStates[item.FileId] = state;
+            await SaveBatchRecordAsync(
+                item.FileId,
+                request.SenderId,
+                item.FileName,
+                item.FileSize,
+                request.TransferKind,
+                request.FileId,
+                safeRelativePath,
+                FileTransferStatus.Pending,
+                itemSavePath);
+        }
+
+        PendingFileRequest = new FileReceiveRequestViewModel
+        {
+            FileId = request.FileId,
+            SenderId = request.SenderId,
+            SenderName = sender,
+            FileName = displayName,
+            FileSizeText = BuildBatchSizeText(fileItems.Length, totalSize),
+            TransferKind = request.TransferKind,
+            ItemCount = fileItems.Length,
+            IsImage = false,
+            GroupId = request.GroupId ?? string.Empty,
+            GroupName = request.GroupName ?? string.Empty
+        };
+        IsFileRequestPaneOpen = true;
+        StatusMessage = request.IsGroupTransfer
+            ? $"群组“{session.Nickname}”收到 {sender} 的{GetTransferKindText(request.TransferKind)}请求：{displayName}"
+            : $"收到 {sender} 的{GetTransferKindText(request.TransferKind)}请求：{displayName}";
+        RequestNotification(
+            $"收到{GetTransferKindText(request.TransferKind)}",
+            request.IsGroupTransfer
+                ? $"{sender} 在群组“{session.Nickname}”发来{GetTransferKindText(request.TransferKind)}：{displayName}"
+                : $"{sender} 想发送{GetTransferKindText(request.TransferKind)}：{displayName}",
+            session.UserId);
+    }
+
+    private async Task AcceptBatchFileRequestAsync(FileTransferRequest request, OnlineUserViewModel sender, ChatMessageViewModel fileMessage)
+    {
+        var saveRoot = _incomingSavePaths.GetValueOrDefault(request.FileId) ?? BuildIncomingBatchRootPath(request, request.FileName);
+        Directory.CreateDirectory(saveRoot);
+
+        var resumeItems = new List<FileTransferResumeItem>();
+        var state = _incomingBatchStates.GetValueOrDefault(request.FileId);
+        foreach (var item in request.TransferItems)
+        {
+            TryNormalizeTransferRelativePath(item.RelativePath, item.IsDirectory, out var safeRelativePath, out _);
+            var savePath = Path.Combine(saveRoot, safeRelativePath);
+            if (item.IsDirectory)
+            {
+                Directory.CreateDirectory(savePath);
+                continue;
+            }
+
+            Directory.CreateDirectory(Path.GetDirectoryName(savePath) ?? saveRoot);
+            var resumeOffset = GetResumeOffset(savePath, item.FileSize);
+            resumeItems.Add(new FileTransferResumeItem(item.FileId, resumeOffset));
+            state?.MarkProgress(item.FileId, item.FileSize == 0 ? 100 : resumeOffset * 100d / item.FileSize);
+            await SaveBatchRecordAsync(
+                item.FileId,
+                request.SenderId,
+                request.ReceiverId,
+                item.FileName,
+                item.FileSize,
+                request.TransferKind,
+                request.FileId,
+                safeRelativePath,
+                FileTransferStatus.Accepted,
+                savePath,
+                resumeOffset);
+        }
+
+        state?.Apply();
+        fileMessage.StatusText = resumeItems.Any(item => item.Offset > 0)
+            ? "已接受，等待断点续传"
+            : "已接受，等待批量传输";
+        await SaveBatchRecordAsync(
+            request.FileId,
+            request.SenderId,
+            request.ReceiverId,
+            request.FileName,
+            request.FileSize,
+            request.TransferKind,
+            request.FileId,
+            null,
+            FileTransferStatus.Accepted,
+            saveRoot,
+            resumeItems.Sum(item => item.Offset));
+
+        await _messageService.SendFileResponseAsync(
+            _settings,
+            ToUserInfo(sender),
+            new FileTransferResponse(request.FileId, true, ResumeItems: resumeItems));
+        StatusMessage = $"已接受{GetTransferKindText(request.TransferKind)}：{request.FileName}";
+    }
+
+    private async Task RejectBatchFileRequestAsync(FileTransferRequest request)
+    {
+        foreach (var item in request.TransferItems.Where(item => !item.IsDirectory))
+        {
+            await SaveBatchRecordAsync(
+                item.FileId,
+                request.SenderId,
+                request.ReceiverId,
+                item.FileName,
+                item.FileSize,
+                request.TransferKind,
+                request.FileId,
+                item.RelativePath,
+                FileTransferStatus.Rejected,
+                _incomingSavePaths.GetValueOrDefault(item.FileId));
+        }
+
+        await SaveBatchRecordAsync(
+            request.FileId,
+            request.SenderId,
+            request.ReceiverId,
+            request.FileName,
+            request.FileSize,
+            request.TransferKind,
+            request.FileId,
+            null,
+            FileTransferStatus.Rejected,
+            _incomingSavePaths.GetValueOrDefault(request.FileId));
+    }
+
     private async Task HandleFileResponseAsync(NetworkPacket packet)
     {
         var response = System.Text.Json.JsonSerializer.Deserialize(packet.PayloadJson, LanTalkJsonContext.Default.FileTransferResponse);
         if (response is null)
         {
+            return;
+        }
+
+        if (_outgoingBatchTransfers.TryGetValue(response.FileId, out var batchTransfer))
+        {
+            await HandleBatchFileResponseAsync(response, batchTransfer);
             return;
         }
 
@@ -1712,7 +2241,9 @@ public sealed partial class MainWindowViewModel : ViewModelBase
         var groupState = _outgoingGroupFileStates.GetValueOrDefault(response.FileId);
         groupState?.MarkAccepted(response.FileId);
         fileMessage.StatusText = groupState is null ? "正在传输" : groupState.BuildStatus();
-        await SaveOutgoingFileStatusAsync(response.FileId, FileTransferStatus.Transferring);
+        var sourceLength = new FileInfo(path).Exists ? new FileInfo(path).Length : 0;
+        var resumeOffset = Math.Clamp(response.ResumeOffset, 0, sourceLength);
+        await SaveOutgoingFileStatusAsync(response.FileId, FileTransferStatus.Transferring, resumeOffset);
 
         try
         {
@@ -1728,7 +2259,7 @@ public sealed partial class MainWindowViewModel : ViewModelBase
                 fileMessage.StatusText = groupState.BuildStatus(value);
             });
 
-            await _fileTransferService.SendFileAsync(receiver.IpAddress, receiver.FilePort, response.FileId, path, progress);
+            await _fileTransferService.SendFileAsync(receiver.IpAddress, receiver.FilePort, response.FileId, path, progress, resumeOffset);
             if (groupState is null)
             {
                 fileMessage.Progress = 100;
@@ -1741,7 +2272,7 @@ public sealed partial class MainWindowViewModel : ViewModelBase
                 StatusMessage = $"群组附件已发送给一名成员，等待接收确认：{fileMessage.FileName}";
             }
 
-            await SaveOutgoingFileStatusAsync(response.FileId, FileTransferStatus.Transferring);
+            await SaveOutgoingFileStatusAsync(response.FileId, FileTransferStatus.Transferring, sourceLength);
         }
         catch (Exception ex)
         {
@@ -1771,11 +2302,135 @@ public sealed partial class MainWindowViewModel : ViewModelBase
         }
     }
 
+    private async Task HandleBatchFileResponseAsync(FileTransferResponse response, OutgoingBatchTransfer batchTransfer)
+    {
+        if (!response.Accepted)
+        {
+            if (batchTransfer.Items.Count == 0)
+            {
+                batchTransfer.State.MarkRejected(response.FileId);
+            }
+            else
+            {
+                foreach (var item in batchTransfer.Items)
+                {
+                    batchTransfer.State.MarkRejected(item.FileId);
+                }
+            }
+
+            batchTransfer.State.Apply();
+            batchTransfer.Message.StatusText = response.Reason ?? "接收方已拒绝";
+            StatusMessage = $"{GetTransferKindText(batchTransfer.TransferKind)}被拒绝：{batchTransfer.Message.FileName}";
+            await SaveBatchRecordAsync(
+                batchTransfer.BatchId,
+                batchTransfer.Receiver.UserId,
+                batchTransfer.Message.FileName,
+                batchTransfer.Items.Sum(item => item.FileSize),
+                batchTransfer.TransferKind,
+                batchTransfer.BatchId,
+                null,
+                FileTransferStatus.Rejected);
+            foreach (var item in batchTransfer.Items)
+            {
+                await SaveOutgoingFileStatusAsync(item.FileId, FileTransferStatus.Rejected);
+            }
+
+            return;
+        }
+
+        if (batchTransfer.Items.Count == 0)
+        {
+            batchTransfer.State.MarkCompleted(response.FileId);
+            batchTransfer.State.Apply();
+            StatusMessage = $"{GetTransferKindText(batchTransfer.TransferKind)}已完成：{batchTransfer.Message.FileName}";
+            await SaveBatchRecordAsync(
+                batchTransfer.BatchId,
+                batchTransfer.Receiver.UserId,
+                batchTransfer.Message.FileName,
+                0,
+                batchTransfer.TransferKind,
+                batchTransfer.BatchId,
+                null,
+                FileTransferStatus.Completed);
+            return;
+        }
+
+        var resumeOffsets = (response.ResumeItems ?? [])
+            .ToDictionary(item => item.FileId, item => item.Offset, StringComparer.Ordinal);
+        batchTransfer.Message.StatusText = "正在批量传输";
+        await SaveBatchRecordAsync(
+            batchTransfer.BatchId,
+            batchTransfer.Receiver.UserId,
+            batchTransfer.Message.FileName,
+            batchTransfer.Items.Sum(item => item.FileSize),
+            batchTransfer.TransferKind,
+            batchTransfer.BatchId,
+            null,
+            FileTransferStatus.Transferring);
+
+        foreach (var item in batchTransfer.Items)
+        {
+            var resumeOffset = resumeOffsets.GetValueOrDefault(item.FileId);
+            resumeOffset = Math.Clamp(resumeOffset, 0, item.FileSize);
+            var progress = new Progress<double>(value =>
+            {
+                batchTransfer.State.MarkProgress(item.FileId, value);
+                batchTransfer.State.Apply();
+            });
+
+            try
+            {
+                await SaveOutgoingFileStatusAsync(item.FileId, FileTransferStatus.Transferring, resumeOffset);
+                await _fileTransferService.SendFileAsync(
+                    batchTransfer.Receiver.IpAddress,
+                    batchTransfer.Receiver.FilePort,
+                    item.FileId,
+                    item.SourcePath,
+                    progress,
+                    resumeOffset);
+                batchTransfer.Message.StatusText = batchTransfer.State.BuildStatus();
+            }
+            catch (Exception ex)
+            {
+                _logger.Error("批量文件传输失败。", ex);
+                batchTransfer.State.MarkFailed(item.FileId);
+                batchTransfer.State.Apply();
+                await SaveOutgoingFileStatusAsync(item.FileId, FileTransferStatus.Failed);
+                StatusMessage = $"{GetTransferKindText(batchTransfer.TransferKind)}传输失败：{ex.Message}";
+
+                try
+                {
+                    await _messageService.SendErrorAsync(
+                        _settings,
+                        batchTransfer.Receiver,
+                        new ErrorPayload("FILE_TRANSFER_FAILED", $"文件传输失败：{item.FileName}", item.FileId));
+                }
+                catch (Exception notifyEx)
+                {
+                    _logger.Warning($"批量文件传输失败通知发送失败：{notifyEx.Message}");
+                }
+            }
+        }
+
+        StatusMessage = $"{GetTransferKindText(batchTransfer.TransferKind)}已发送，等待对方确认。";
+    }
+
     private async Task HandleFileFinishedAsync(NetworkPacket packet)
     {
         var finished = System.Text.Json.JsonSerializer.Deserialize(packet.PayloadJson, LanTalkJsonContext.Default.FileTransferFinished);
         if (finished is null)
         {
+            return;
+        }
+
+        if (_outgoingBatchStates.TryGetValue(finished.FileId, out var outgoingBatchState))
+        {
+            outgoingBatchState.MarkCompleted(finished.FileId);
+            outgoingBatchState.Apply();
+            await SaveOutgoingFileStatusAsync(finished.FileId, FileTransferStatus.Completed);
+            StatusMessage = outgoingBatchState.IsComplete
+                ? $"{GetTransferKindText(outgoingBatchState.TransferKind)}已全部接收。"
+                : $"{GetTransferKindText(outgoingBatchState.TransferKind)}已有文件完成接收。";
             return;
         }
 
@@ -1817,6 +2472,20 @@ public sealed partial class MainWindowViewModel : ViewModelBase
 
         if (!string.IsNullOrWhiteSpace(error.FileId))
         {
+            if (_outgoingBatchStates.TryGetValue(error.FileId, out var outgoingBatchState))
+            {
+                outgoingBatchState.MarkFailed(error.FileId);
+                outgoingBatchState.Apply();
+                await SaveOutgoingFileStatusAsync(error.FileId, FileTransferStatus.Failed);
+            }
+
+            if (_incomingBatchStates.TryGetValue(error.FileId, out var incomingBatchState))
+            {
+                incomingBatchState.MarkFailed(error.FileId);
+                incomingBatchState.Apply();
+                await SaveIncomingFileStatusAsync(error.FileId, FileTransferStatus.Failed);
+            }
+
             if (_outgoingFileMessages.TryGetValue(error.FileId, out var outgoingMessage))
             {
                 outgoingMessage.StatusText = "传输失败";
@@ -2240,6 +2909,26 @@ public sealed partial class MainWindowViewModel : ViewModelBase
         }, cancellationToken);
     }
 
+    private Task QueueGroupBatchDeliveryAsync(
+        string recipientId,
+        FileTransferRequest request,
+        string sourceMap,
+        string reason,
+        CancellationToken cancellationToken = default)
+    {
+        var payloadJson = JsonSerializer.Serialize(request, LanTalkJsonContext.Default.FileTransferRequest);
+        return _outgoingDeliveryRepository.SaveAsync(new OutgoingDeliveryRecord
+        {
+            DeliveryId = CreateDeliveryId(PacketType.FileRequest, recipientId, request.FileId),
+            RecipientId = recipientId,
+            PacketType = PacketType.FileRequest,
+            PayloadJson = payloadJson,
+            SourcePath = sourceMap,
+            CreatedTime = DateTimeOffset.Now,
+            LastError = reason
+        }, cancellationToken);
+    }
+
     private async Task RetryPendingDeliveriesAsync(OnlineUserViewModel user)
     {
         if (user.Status != UserStatus.Online || user.UserId == _settings.UserId)
@@ -2336,6 +3025,12 @@ public sealed partial class MainWindowViewModel : ViewModelBase
             return;
         }
 
+        if (request.IsBatchTransfer)
+        {
+            await RetryGroupBatchFileDeliveryAsync(receiver, record, request);
+            return;
+        }
+
         if (string.IsNullOrWhiteSpace(record.SourcePath) || !File.Exists(record.SourcePath))
         {
             var reason = $"源文件不可用，无法补发：{request.FileName}";
@@ -2362,6 +3057,67 @@ public sealed partial class MainWindowViewModel : ViewModelBase
             await _outgoingDeliveryRepository.MarkAttemptAsync(record.DeliveryId, record.AttemptCount + 1, ex.Message);
             message.StatusText = "离线补发失败";
             _logger.Warning($"离线群组附件补发给 {receiver.Nickname}({receiver.IpAddress}) 失败：{ex.Message}");
+        }
+    }
+
+    private async Task RetryGroupBatchFileDeliveryAsync(UserInfo receiver, OutgoingDeliveryRecord record, FileTransferRequest request)
+    {
+        if (string.IsNullOrWhiteSpace(record.SourcePath))
+        {
+            var reason = $"批量附件源路径映射不可用，无法补发：{request.FileName}";
+            await _outgoingDeliveryRepository.MarkAttemptAsync(record.DeliveryId, record.AttemptCount + 1, reason);
+            StatusMessage = reason;
+            _logger.Warning(reason);
+            return;
+        }
+
+        var sourceMap = ParseSourceMap(record.SourcePath);
+        var fileItems = request.TransferItems.Where(item => !item.IsDirectory).ToArray();
+        var missingItem = fileItems.FirstOrDefault(item => !sourceMap.TryGetValue(item.FileId, out var path) || !File.Exists(path));
+        if (missingItem is not null)
+        {
+            var reason = $"源文件不可用，无法补发：{missingItem.FileName}";
+            await _outgoingDeliveryRepository.MarkAttemptAsync(record.DeliveryId, record.AttemptCount + 1, reason);
+            StatusMessage = reason;
+            _logger.Warning(reason);
+            return;
+        }
+
+        var totalSize = fileItems.Sum(item => item.FileSize);
+        var message = CreateBatchMessage(request.FileName, request.TransferKind, fileItems.Length, totalSize, isMine: true);
+        message.StatusText = "等待离线补发";
+        var state = new FileBatchTransferState(message, fileItems.Length, totalSize, request.TransferKind, isSender: true);
+        var outgoingItems = new List<OutgoingBatchItem>();
+
+        foreach (var item in fileItems)
+        {
+            var sourcePath = sourceMap[item.FileId];
+            var localItem = new LocalTransferItem(item.FileId, sourcePath, item.FileName, item.RelativePath, item.FileSize, IsDirectory: false);
+            RegisterOutgoingBatchItem(localItem, receiver, message, state);
+            outgoingItems.Add(new OutgoingBatchItem(item.FileId, sourcePath, item.FileName, item.RelativePath, item.FileSize));
+        }
+
+        _outgoingFileMessages[request.FileId] = message;
+        _outgoingFileReceivers[request.FileId] = receiver;
+        _outgoingBatchTransfers[request.FileId] = new OutgoingBatchTransfer(request.FileId, receiver, outgoingItems, message, state, request.TransferKind);
+
+        if (!string.IsNullOrWhiteSpace(request.GroupId) && SelectedUser?.UserId == request.GroupId)
+        {
+            Messages.Add(message);
+        }
+
+        try
+        {
+            await _messageService.SendFileRequestAsync(_settings, receiver, request);
+            await _outgoingDeliveryRepository.DeleteAsync(record.DeliveryId);
+            message.StatusText = "离线补发请求已发送";
+            StatusMessage = $"已向 {receiver.Nickname} 补发群组{GetTransferKindText(request.TransferKind)}请求：{request.FileName}";
+        }
+        catch (Exception ex)
+        {
+            await _outgoingDeliveryRepository.MarkAttemptAsync(record.DeliveryId, record.AttemptCount + 1, ex.Message);
+            message.StatusText = "离线补发失败";
+            _logger.Warning($"离线群组批量附件补发给 {receiver.Nickname}({receiver.IpAddress}) 失败：{ex.Message}");
         }
     }
 
@@ -2680,7 +3436,7 @@ public sealed partial class MainWindowViewModel : ViewModelBase
             _fileServerCts.Token));
     }
 
-    private async Task<Stream> CreateReceiveFileStreamAsync(string fileId, long fileSize, CancellationToken cancellationToken)
+    private async Task<Stream> CreateReceiveFileStreamAsync(string fileId, long fileSize, long resumeOffset, CancellationToken cancellationToken)
     {
         var request = _pendingFileRequests.GetValueOrDefault(fileId);
         var fileName = request?.FileName ?? $"{fileId}.bin";
@@ -2689,15 +3445,30 @@ public sealed partial class MainWindowViewModel : ViewModelBase
 
         try
         {
-            Directory.CreateDirectory(_settings.FileSavePath);
-            var stream = File.Create(savePath);
+            Directory.CreateDirectory(Path.GetDirectoryName(savePath) ?? _settings.FileSavePath);
+            var stream = new FileStream(savePath, FileMode.OpenOrCreate, FileAccess.Write, FileShare.Read);
+            if (resumeOffset == 0)
+            {
+                stream.SetLength(0);
+            }
+            else
+            {
+                if (stream.Length < resumeOffset)
+                {
+                    stream.Dispose();
+                    throw new IOException("本地未完成文件小于续传偏移量，无法继续接收。");
+                }
+
+                stream.SetLength(resumeOffset);
+                stream.Seek(resumeOffset, SeekOrigin.Begin);
+            }
 
             if (_incomingFileMessages.TryGetValue(fileId, out var message))
             {
                 await Dispatcher.UIThread.InvokeAsync(() =>
                 {
-                    message.StatusText = "正在接收";
-                    message.Progress = 0;
+                    message.StatusText = resumeOffset > 0 ? "正在断点续传" : "正在接收";
+                    message.Progress = fileSize == 0 ? 100 : resumeOffset * 100d / fileSize;
                 });
             }
 
@@ -2713,12 +3484,27 @@ public sealed partial class MainWindowViewModel : ViewModelBase
 
     private async Task UpdateReceiveProgressAsync(string fileId, double progress, CancellationToken cancellationToken)
     {
+        var batchState = _incomingBatchStates.GetValueOrDefault(fileId);
         if (_incomingFileMessages.TryGetValue(fileId, out var message))
         {
             await Dispatcher.UIThread.InvokeAsync(() =>
             {
-                message.Progress = progress;
-                message.StatusText = progress >= 100 ? "接收完成" : $"正在接收 {progress:0}%";
+                if (batchState is not null)
+                {
+                    batchState.MarkProgress(fileId, progress);
+                    if (progress >= 100)
+                    {
+                        batchState.MarkCompleted(fileId);
+                    }
+
+                    batchState.Apply();
+                }
+                else
+                {
+                    message.Progress = progress;
+                    message.StatusText = progress >= 100 ? "接收完成" : $"正在接收 {progress:0}%";
+                }
+
                 if (progress >= 100 && _incomingSavePaths.TryGetValue(fileId, out var savePath))
                 {
                     message.SetImagePath(savePath);
@@ -2815,12 +3601,18 @@ public sealed partial class MainWindowViewModel : ViewModelBase
             FileName = request.FileName,
             FileSize = request.FileSize,
             SavePath = _incomingSavePaths.GetValueOrDefault(fileId),
+            TransferKind = request.TransferKind,
+            BatchId = request.BatchId,
+            RelativePath = request.RelativePath,
+            BytesTransferred = status == FileTransferStatus.Completed
+                ? request.FileSize
+                : GetExistingFileLength(_incomingSavePaths.GetValueOrDefault(fileId)),
             Status = status,
             TransferTime = DateTimeOffset.Now
         }, cancellationToken);
     }
 
-    private async Task SaveOutgoingFileStatusAsync(string fileId, FileTransferStatus status)
+    private async Task SaveOutgoingFileStatusAsync(string fileId, FileTransferStatus status, long? bytesTransferred = null)
     {
         if (!_outgoingFilePaths.TryGetValue(fileId, out var path) ||
             !_outgoingFileReceivers.TryGetValue(fileId, out var receiver) ||
@@ -2829,14 +3621,77 @@ public sealed partial class MainWindowViewModel : ViewModelBase
             return;
         }
 
+        var fileInfo = new FileInfo(path);
+        var batchInfo = FindOutgoingBatchInfo(fileId);
+        var fileSize = batchInfo?.FileSize ?? (fileInfo.Exists ? fileInfo.Length : 0);
         await _fileTransferRepository.SaveAsync(new FileTransferRecord
         {
             FileId = fileId,
             SenderId = _settings.UserId,
             ReceiverId = receiver.UserId,
-            FileName = message.FileName,
-            FileSize = new FileInfo(path).Exists ? new FileInfo(path).Length : 0,
+            FileName = batchInfo?.FileName ?? message.FileName,
+            FileSize = fileSize,
             SavePath = path,
+            TransferKind = batchInfo?.TransferKind ?? FileTransferKind.SingleFile,
+            BatchId = batchInfo?.BatchId,
+            RelativePath = batchInfo?.RelativePath,
+            BytesTransferred = bytesTransferred ?? (status == FileTransferStatus.Completed ? fileSize : 0),
+            Status = status,
+            TransferTime = DateTimeOffset.Now
+        });
+    }
+
+    private async Task SaveBatchRecordAsync(
+        string fileId,
+        string receiverId,
+        string fileName,
+        long fileSize,
+        FileTransferKind transferKind,
+        string? batchId,
+        string? relativePath,
+        FileTransferStatus status,
+        string? savePath = null,
+        long bytesTransferred = 0)
+    {
+        await SaveBatchRecordAsync(
+            fileId,
+            _settings.UserId,
+            receiverId,
+            fileName,
+            fileSize,
+            transferKind,
+            batchId,
+            relativePath,
+            status,
+            savePath,
+            bytesTransferred);
+    }
+
+    private Task SaveBatchRecordAsync(
+        string fileId,
+        string senderId,
+        string receiverId,
+        string fileName,
+        long fileSize,
+        FileTransferKind transferKind,
+        string? batchId,
+        string? relativePath,
+        FileTransferStatus status,
+        string? savePath = null,
+        long bytesTransferred = 0)
+    {
+        return _fileTransferRepository.SaveAsync(new FileTransferRecord
+        {
+            FileId = fileId,
+            SenderId = senderId,
+            ReceiverId = receiverId,
+            FileName = fileName,
+            FileSize = fileSize,
+            SavePath = savePath,
+            TransferKind = transferKind,
+            BatchId = batchId,
+            RelativePath = relativePath,
+            BytesTransferred = bytesTransferred,
             Status = status,
             TransferTime = DateTimeOffset.Now
         });
@@ -2909,7 +3764,27 @@ public sealed partial class MainWindowViewModel : ViewModelBase
         return new AppServices(settingsService, historyService, discoveryService, messageService, fileTransferService, fileTransferRepository, userRepository, groupRepository, outgoingDeliveryRepository, fileServer, logger);
     }
 
-    private static async Task<string?> PickFileAsync()
+    private static async Task<IReadOnlyList<string>> PickFilesAsync()
+    {
+        if (Avalonia.Application.Current?.ApplicationLifetime is not IClassicDesktopStyleApplicationLifetime desktop ||
+            desktop.MainWindow is null)
+        {
+            return [];
+        }
+
+        var files = await desktop.MainWindow.StorageProvider.OpenFilePickerAsync(new FilePickerOpenOptions
+        {
+            Title = "选择要发送的文件",
+            AllowMultiple = true
+        });
+
+        return files
+            .Select(file => file.Path.LocalPath)
+            .Where(path => !string.IsNullOrWhiteSpace(path))
+            .ToArray();
+    }
+
+    private static async Task<string?> PickFolderAsync()
     {
         if (Avalonia.Application.Current?.ApplicationLifetime is not IClassicDesktopStyleApplicationLifetime desktop ||
             desktop.MainWindow is null)
@@ -2917,13 +3792,13 @@ public sealed partial class MainWindowViewModel : ViewModelBase
             return null;
         }
 
-        var files = await desktop.MainWindow.StorageProvider.OpenFilePickerAsync(new FilePickerOpenOptions
+        var folders = await desktop.MainWindow.StorageProvider.OpenFolderPickerAsync(new FolderPickerOpenOptions
         {
-            Title = "选择要发送的文件",
+            Title = "选择要发送的文件夹",
             AllowMultiple = false
         });
 
-        return files.Count == 0 ? null : files[0].Path.LocalPath;
+        return folders.Count == 0 ? null : folders[0].Path.LocalPath;
     }
 
     private static async Task<string?> PickImageAsync()
@@ -3043,7 +3918,434 @@ public sealed partial class MainWindowViewModel : ViewModelBase
         return $"{size:0.##} {units[unitIndex]}";
     }
 
+    private static IReadOnlyList<LocalTransferItem> CreateLocalTransferItems(
+        IReadOnlyList<FileInfo> files,
+        FileTransferKind transferKind,
+        string? rootFolderPath,
+        IReadOnlyList<DirectoryInfo>? directories)
+    {
+        var items = new List<LocalTransferItem>();
+        if (transferKind == FileTransferKind.Folder && !string.IsNullOrWhiteSpace(rootFolderPath))
+        {
+            foreach (var directory in directories ?? [])
+            {
+                var relativePath = NormalizeOutgoingRelativePath(Path.GetRelativePath(rootFolderPath, directory.FullName));
+                if (string.IsNullOrWhiteSpace(relativePath) || relativePath == ".")
+                {
+                    continue;
+                }
+
+                items.Add(new LocalTransferItem(
+                    Guid.NewGuid().ToString("N"),
+                    directory.FullName,
+                    directory.Name,
+                    relativePath,
+                    0,
+                    IsDirectory: true));
+            }
+
+            foreach (var file in files.Where(file => file.Exists))
+            {
+                var relativePath = NormalizeOutgoingRelativePath(Path.GetRelativePath(rootFolderPath, file.FullName));
+                items.Add(new LocalTransferItem(
+                    Guid.NewGuid().ToString("N"),
+                    file.FullName,
+                    file.Name,
+                    relativePath,
+                    file.Length,
+                    IsDirectory: false));
+            }
+
+            return items;
+        }
+
+        var usedNames = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+        foreach (var file in files.Where(file => file.Exists))
+        {
+            var relativePath = CreateUniqueFileName(file.Name, usedNames);
+            items.Add(new LocalTransferItem(
+                Guid.NewGuid().ToString("N"),
+                file.FullName,
+                file.Name,
+                relativePath,
+                file.Length,
+                IsDirectory: false));
+        }
+
+        return items;
+    }
+
+    private static LocalTransferItem[] CloneTransferItemsForRecipient(IReadOnlyList<LocalTransferItem> localItems)
+    {
+        return localItems
+            .Select(item => item with { FileId = Guid.NewGuid().ToString("N") })
+            .ToArray();
+    }
+
+    private void RegisterOutgoingBatchItem(
+        LocalTransferItem item,
+        UserInfo receiver,
+        ChatMessageViewModel message,
+        FileBatchTransferState state)
+    {
+        _outgoingFilePaths[item.FileId] = item.SourcePath;
+        _outgoingFileReceivers[item.FileId] = receiver;
+        _outgoingFileMessages[item.FileId] = message;
+        _outgoingBatchStates[item.FileId] = state;
+    }
+
+    private ChatMessageViewModel CreateBatchMessage(
+        string displayName,
+        FileTransferKind transferKind,
+        int fileCount,
+        long totalSize,
+        bool isMine,
+        string? senderName = null)
+    {
+        return new ChatMessageViewModel
+        {
+            SenderName = senderName ?? (isMine ? LocalNickname : "对方"),
+            Content = transferKind == FileTransferKind.Folder ? $"文件夹：{displayName}" : $"多文件：{displayName}",
+            TimeText = DateTimeOffset.Now.ToString("HH:mm"),
+            IsMine = isMine,
+            Kind = MessageKind.File,
+            FileName = displayName,
+            FileSizeText = BuildBatchSizeText(fileCount, totalSize),
+            Progress = 0,
+            StatusText = "等待确认"
+        };
+    }
+
+    private static string BuildBatchDisplayName(FileTransferKind transferKind, string batchName, int fileCount)
+    {
+        return transferKind switch
+        {
+            FileTransferKind.Folder => string.IsNullOrWhiteSpace(batchName) ? "文件夹" : batchName,
+            FileTransferKind.MultipleFiles => $"{fileCount} 个文件",
+            _ => batchName
+        };
+    }
+
+    private static string BuildBatchRecentText(FileTransferKind transferKind, string displayName)
+    {
+        return transferKind == FileTransferKind.Folder ? $"[文件夹] {displayName}" : $"[多文件] {displayName}";
+    }
+
+    private static string BuildIncomingBatchRecentText(FileTransferKind transferKind, string displayName)
+    {
+        return transferKind == FileTransferKind.Folder ? $"收到文件夹：{displayName}" : $"收到多文件：{displayName}";
+    }
+
+    private static string GetTransferKindText(FileTransferKind transferKind)
+    {
+        return transferKind switch
+        {
+            FileTransferKind.Folder => "文件夹",
+            FileTransferKind.MultipleFiles => "多文件",
+            _ => "文件"
+        };
+    }
+
+    private static string BuildBatchSizeText(int fileCount, long totalSize)
+    {
+        return $"{fileCount} 个文件 · {FormatFileSize(totalSize)}";
+    }
+
+    private string BuildIncomingBatchRootPath(FileTransferRequest request, string displayName)
+    {
+        var safeName = ToSafePathSegment(displayName);
+        var suffix = request.FileId.Length >= 8 ? request.FileId[..8] : request.FileId;
+        return Path.Combine(_settings.FileSavePath, $"{safeName}-{suffix}");
+    }
+
+    private static string NormalizeOutgoingRelativePath(string relativePath)
+    {
+        return string.Join(
+            Path.DirectorySeparatorChar,
+            relativePath
+                .Replace(Path.AltDirectorySeparatorChar, Path.DirectorySeparatorChar)
+                .Split(Path.DirectorySeparatorChar, StringSplitOptions.RemoveEmptyEntries));
+    }
+
+    private static string CreateUniqueFileName(string fileName, Dictionary<string, int> usedNames)
+    {
+        var safeName = ToSafePathSegment(fileName);
+        if (!usedNames.TryGetValue(safeName, out var count))
+        {
+            usedNames[safeName] = 1;
+            return safeName;
+        }
+
+        count++;
+        usedNames[safeName] = count;
+        var extension = Path.GetExtension(safeName);
+        var stem = Path.GetFileNameWithoutExtension(safeName);
+        return $"{stem} ({count}){extension}";
+    }
+
+    private static string ToSafePathSegment(string value)
+    {
+        var invalid = Path.GetInvalidFileNameChars();
+        var safe = new string(value.Select(ch => invalid.Contains(ch) ? '_' : ch).ToArray()).Trim();
+        return string.IsNullOrWhiteSpace(safe) ? "传输批次" : safe;
+    }
+
+    private static bool TryNormalizeTransferRelativePath(
+        string relativePath,
+        bool isDirectory,
+        out string normalizedPath,
+        out string? error)
+    {
+        normalizedPath = string.Empty;
+        error = null;
+        if (string.IsNullOrWhiteSpace(relativePath))
+        {
+            error = "路径为空";
+            return false;
+        }
+
+        var candidate = relativePath.Trim();
+        if (Path.IsPathRooted(candidate))
+        {
+            error = "不能使用绝对路径";
+            return false;
+        }
+
+        var invalid = Path.GetInvalidFileNameChars();
+        var parts = candidate
+            .Replace(Path.AltDirectorySeparatorChar, Path.DirectorySeparatorChar)
+            .Split(Path.DirectorySeparatorChar, StringSplitOptions.RemoveEmptyEntries);
+        var safeParts = new List<string>();
+        foreach (var part in parts)
+        {
+            if (part == ".")
+            {
+                continue;
+            }
+
+            if (part == "..")
+            {
+                error = "不能包含上级目录";
+                return false;
+            }
+
+            if (part.IndexOfAny(invalid) >= 0)
+            {
+                error = $"路径片段包含非法字符：{part}";
+                return false;
+            }
+
+            safeParts.Add(part);
+        }
+
+        if (safeParts.Count == 0)
+        {
+            if (isDirectory)
+            {
+                normalizedPath = ".";
+                return true;
+            }
+
+            error = "文件名为空";
+            return false;
+        }
+
+        normalizedPath = Path.Combine(safeParts.ToArray());
+        return true;
+    }
+
+    private static long GetResumeOffset(string savePath, long fileSize)
+    {
+        if (!File.Exists(savePath))
+        {
+            return 0;
+        }
+
+        var length = new FileInfo(savePath).Length;
+        if (length < 0 || length > fileSize)
+        {
+            return 0;
+        }
+
+        return length;
+    }
+
+    private static long GetExistingFileLength(string? savePath)
+    {
+        return !string.IsNullOrWhiteSpace(savePath) && File.Exists(savePath)
+            ? new FileInfo(savePath).Length
+            : 0;
+    }
+
+    private OutgoingBatchInfo? FindOutgoingBatchInfo(string fileId)
+    {
+        foreach (var transfer in _outgoingBatchTransfers.Values)
+        {
+            var item = transfer.Items.FirstOrDefault(batchItem => batchItem.FileId == fileId);
+            if (item is not null)
+            {
+                return new OutgoingBatchInfo(
+                    transfer.BatchId,
+                    transfer.TransferKind,
+                    item.FileName,
+                    item.RelativePath,
+                    item.FileSize);
+            }
+        }
+
+        return null;
+    }
+
+    private static string BuildSourceMap(IReadOnlyList<LocalTransferItem> localItems)
+    {
+        return string.Join(
+            '\n',
+            localItems
+                .Where(item => !item.IsDirectory)
+                .Select(item => $"{Convert.ToBase64String(System.Text.Encoding.UTF8.GetBytes(item.FileId))}\t{Convert.ToBase64String(System.Text.Encoding.UTF8.GetBytes(item.SourcePath))}"));
+    }
+
+    private static IReadOnlyDictionary<string, string> ParseSourceMap(string sourceMap)
+    {
+        var result = new Dictionary<string, string>(StringComparer.Ordinal);
+        foreach (var line in sourceMap.Split('\n', StringSplitOptions.RemoveEmptyEntries))
+        {
+            var parts = line.Split('\t');
+            if (parts.Length != 2)
+            {
+                continue;
+            }
+
+            try
+            {
+                var fileId = System.Text.Encoding.UTF8.GetString(Convert.FromBase64String(parts[0]));
+                var sourcePath = System.Text.Encoding.UTF8.GetString(Convert.FromBase64String(parts[1]));
+                result[fileId] = sourcePath;
+            }
+            catch (FormatException)
+            {
+            }
+        }
+
+        return result;
+    }
+
+    private sealed record LocalTransferItem(
+        string FileId,
+        string SourcePath,
+        string FileName,
+        string RelativePath,
+        long FileSize,
+        bool IsDirectory)
+    {
+        public FileTransferItem ToTransferItem()
+        {
+            return new FileTransferItem(FileId, FileName, RelativePath, FileSize, IsDirectory);
+        }
+    }
+
+    private sealed record OutgoingBatchItem(
+        string FileId,
+        string SourcePath,
+        string FileName,
+        string RelativePath,
+        long FileSize);
+
+    private sealed record OutgoingBatchTransfer(
+        string BatchId,
+        UserInfo Receiver,
+        IReadOnlyList<OutgoingBatchItem> Items,
+        ChatMessageViewModel Message,
+        FileBatchTransferState State,
+        FileTransferKind TransferKind);
+
+    private sealed record OutgoingBatchInfo(
+        string BatchId,
+        FileTransferKind TransferKind,
+        string FileName,
+        string RelativePath,
+        long FileSize);
+
     private sealed record GroupQueuedSendResult(int SuccessCount, int QueuedCount, int FailureCount, bool IsEncrypted);
+
+    private sealed class FileBatchTransferState
+    {
+        private readonly ChatMessageViewModel message;
+        private readonly Dictionary<string, double> progressByFileId = new(StringComparer.Ordinal);
+        private readonly HashSet<string> completedFileIds = new(StringComparer.Ordinal);
+        private readonly HashSet<string> rejectedFileIds = new(StringComparer.Ordinal);
+        private readonly HashSet<string> failedFileIds = new(StringComparer.Ordinal);
+
+        public FileBatchTransferState(ChatMessageViewModel message, int totalFileCount, long totalBytes, FileTransferKind transferKind, bool isSender)
+        {
+            this.message = message;
+            TotalFileCount = totalFileCount;
+            TotalBytes = totalBytes;
+            TransferKind = transferKind;
+            IsSender = isSender;
+        }
+
+        public int TotalFileCount { get; }
+
+        public long TotalBytes { get; }
+
+        public FileTransferKind TransferKind { get; }
+
+        public bool IsSender { get; }
+
+        public bool IsComplete => TotalFileCount == 0 || completedFileIds.Count >= TotalFileCount;
+
+        public void MarkProgress(string fileId, double progress)
+        {
+            progressByFileId[fileId] = Math.Clamp(progress, 0, 100);
+        }
+
+        public void MarkCompleted(string fileId)
+        {
+            progressByFileId[fileId] = 100;
+            completedFileIds.Add(fileId);
+            failedFileIds.Remove(fileId);
+        }
+
+        public void MarkRejected(string fileId)
+        {
+            rejectedFileIds.Add(fileId);
+        }
+
+        public void MarkFailed(string fileId)
+        {
+            failedFileIds.Add(fileId);
+        }
+
+        public string BuildStatus()
+        {
+            if (TotalFileCount == 0)
+            {
+                return IsSender ? "空文件夹已发送" : "空文件夹已接收";
+            }
+
+            var verb = IsSender ? "发送" : "接收";
+            var completed = completedFileIds.Count;
+            var failed = failedFileIds.Count;
+            var rejected = rejectedFileIds.Count;
+            if (completed + failed + rejected >= TotalFileCount)
+            {
+                return failed == 0 && rejected == 0
+                    ? $"{verb}完成 · {completed}/{TotalFileCount}"
+                    : $"{verb}结束 · 完成 {completed}/{TotalFileCount}，拒绝 {rejected}，失败 {failed}";
+            }
+
+            return $"正在{verb} {message.Progress:0}% · 完成 {completed}/{TotalFileCount}，拒绝 {rejected}，失败 {failed}";
+        }
+
+        public void Apply()
+        {
+            message.Progress = TotalFileCount == 0
+                ? 100
+                : progressByFileId.Values.DefaultIfEmpty(0).Sum() / TotalFileCount;
+            message.StatusText = BuildStatus();
+        }
+    }
 
     private sealed class GroupFileTransferState
     {

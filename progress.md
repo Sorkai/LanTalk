@@ -582,3 +582,32 @@
 - 验证结果：
   - `dotnet build LanTalk.sln -v:minimal`：0 警告，0 错误。
   - `dotnet test LanTalk.sln -v:minimal`：51 个测试全部通过。
+
+### 阶段 20：多文件、文件夹传输与断点续传
+- **状态：** 已完成并通过自动化验证。
+- 本轮目标：
+  - 支持一次选择多个文件发送。
+  - 支持选择文件夹并保留相对目录结构传输。
+  - 支持传输中断后重新确认同一批次或同一文件时从接收端已有字节继续。
+- 已执行操作：
+  - 读取 `README.md`、`docs/protocol.md`、`docs/test-plan.md`、`task_plan.md`、`findings.md`、`progress.md`。
+  - 抽查 `FileTransferRequest`、`FileTransferResponse`、`TcpFileClient`、`TcpFileServer`、`FileTransferService`、`MainWindowViewModel`、`FileTransferRepository`、`DatabaseInitializer` 和相关测试。
+  - 将阶段 20 写入 `task_plan.md`，并把协议/路径安全/续传 offset 的设计发现写入 `findings.md`。
+  - Core 新增 `FileTransferKind`、`FileTransferItem`、`FileTransferResumeItem`，并扩展 `FileTransferRequest` / `FileTransferResponse` / `FileTransferRecord`。
+  - Network 文件流新增 v2 header，支持 offset 续传，并保留旧 header 兼容。
+  - App 文件按钮支持多选，新增文件夹按钮；接收端对多文件/文件夹批次只确认一次。
+  - App 接收端增加相对路径安全校验、目录创建、已有文件长度检测和批次总体进度。
+  - Storage `FileTransfers` 增加批次与续传字段，并补齐旧表迁移。
+  - 更新 README、`docs/protocol.md`、`docs/test-plan.md`。
+- 当前设计：
+  - 协议层增加文件批次和文件项模型。
+  - TCP 文件流增加兼容旧 header 的 v2 header，用于携带续传 offset。
+  - UI 层增加多文件选择和文件夹选择入口，接收端批次只确认一次。
+  - 断点续传由接收端根据已有目标文件长度返回 offset，发送端从 offset 后继续流式发送。
+- 验证结果：
+  - `dotnet build LanTalk.sln -v:minimal`：0 警告，0 错误。
+  - `dotnet test LanTalk.sln -v:minimal`：55 个测试全部通过。
+- 验证插曲：
+  - 一次将 `dotnet build` 和 `dotnet test` 并行执行时，`MessageService_ShouldSendEncryptedGroupMessageOverTcp` 出现 TCP 回环连接拒绝；单独重跑 `dotnet test LanTalk.sln -v:minimal` 后 55 项全部通过，判断为并行执行带来的测试时序波动。
+- 后续建议：
+  - 用双机真实环境补充 100MB 多文件、深层文件夹和传输中断后续传验收。

@@ -24,6 +24,10 @@ public sealed class FileTransferRepositoryTests
             FileName = "demo.txt",
             FileSize = 128,
             SavePath = "C:\\Temp\\demo.txt",
+            TransferKind = FileTransferKind.Folder,
+            BatchId = "batch-1",
+            RelativePath = "docs\\demo.txt",
+            BytesTransferred = 64,
             Status = FileTransferStatus.Completed,
             TransferTime = DateTimeOffset.Now
         });
@@ -32,9 +36,12 @@ public sealed class FileTransferRepositoryTests
         Assert.Single(records);
         Assert.Equal("demo.txt", records[0].FileName);
         Assert.Equal(FileTransferStatus.Completed, records[0].Status);
+        Assert.Equal(FileTransferKind.Folder, records[0].TransferKind);
+        Assert.Equal("batch-1", records[0].BatchId);
+        Assert.Equal("docs\\demo.txt", records[0].RelativePath);
+        Assert.Equal(64, records[0].BytesTransferred);
 
         Microsoft.Data.Sqlite.SqliteConnection.ClearAllPools();
         File.Delete(databasePath);
     }
 }
-

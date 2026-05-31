@@ -64,5 +64,17 @@
 - 文件请求通过 TCP 消息端口发送 `FileTransferRequest`。
 - 接收方返回 `FileTransferResponse`，对应 `FileAccept` 或 `FileReject`。
 - 文件内容通过 TCP 文件端口传输。
-- 文件流前缀包含 `FileId` 和文件大小。
+- 单文件请求保持兼容旧字段：`FileId`、`FileName`、`FileSize`、`SenderId`、`ReceiverId`、`FilePort`。
+- 多文件和文件夹请求使用同一个 `FileTransferRequest`，新增 `TransferKind`、`BatchId`、`BatchName` 和 `Items`：
+  - `TransferKind=MultipleFiles` 表示一次选择的多个文件。
+  - `TransferKind=Folder` 表示文件夹传输。
+  - `Items` 中每个 `FileTransferItem` 都有独立 `FileId`、文件名、相对路径、大小和目录标记。
+- 接收方对多文件/文件夹只确认一次；确认时在 `FileTransferResponse.ResumeItems` 中返回每个文件项已有的字节数。
+- 文件夹只传相对路径，不传发送方绝对路径；接收方会拒绝绝对路径、`..` 和非法路径片段，避免写出接收目录。
+- 文件流 v2 前缀包含协议标记、版本、`FileId`、文件总大小和续传 offset；服务端仍兼容旧的 `FileId + 文件大小` 前缀。
+- 断点续传流程：
+  1. 接收方接受请求时检查目标文件是否已存在。
+  2. 若本地大小小于或等于期望大小，则把已有大小作为 offset 返回。
+  3. 发送方从 offset 位置 `Seek` 后继续流式发送剩余内容。
+  4. 接收方以追加方式写入，完成后继续发送 `FileFinished`。
 - 文件内容使用 64KB 缓冲区分块传输，不使用 `File.ReadAllBytes`。

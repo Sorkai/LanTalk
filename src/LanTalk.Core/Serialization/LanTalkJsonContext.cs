@@ -13,6 +13,8 @@ namespace LanTalk.Core.Serialization;
 [JsonSerializable(typeof(ChatMessage))]
 [JsonSerializable(typeof(FileTransferRequest))]
 [JsonSerializable(typeof(FileTransferResponse))]
+[JsonSerializable(typeof(FileTransferItem))]
+[JsonSerializable(typeof(FileTransferResumeItem))]
 [JsonSerializable(typeof(FileTransferFinished))]
 [JsonSerializable(typeof(FileTransferRecord))]
 [JsonSerializable(typeof(ImageMessageContent))]
@@ -30,6 +32,10 @@ namespace LanTalk.Core.Serialization;
 [JsonSerializable(typeof(List<ChatMessage>))]
 [JsonSerializable(typeof(IReadOnlyList<string>))]
 [JsonSerializable(typeof(List<string>))]
+[JsonSerializable(typeof(IReadOnlyList<FileTransferItem>))]
+[JsonSerializable(typeof(List<FileTransferItem>))]
+[JsonSerializable(typeof(IReadOnlyList<FileTransferResumeItem>))]
+[JsonSerializable(typeof(List<FileTransferResumeItem>))]
 public partial class LanTalkJsonContext : JsonSerializerContext
 {
 }
