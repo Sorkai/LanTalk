@@ -376,6 +376,19 @@
 - 离线文件提醒复用 `OutgoingDeliveries`：单文件保存源路径，批量/文件夹保存 fileId 到源路径的 base64 映射；成员上线重试前先发送 `OfflineFileReminder`，随后重新发送原 `FileRequest`。
 - 当前自动化验证已扩展到 63 项，覆盖新增 payload 序列化、TCP 控制包回环、旧表迁移、仓储已读/撤回行为。
 
+## 2026-06-01 下一步开发计划差距梳理
+- `next-development-plan.md` 已把下一轮工作收敛成“文档闭环、日志生产化、性能优化、安全增强、导出/压缩、通知/开机自启”六类任务，适合继续沿用阶段化推进而不是大爆炸重构。
+- 当前仓库里已经存在可复用基础：
+  - `DesktopNotificationService` 已实现自绘 toast，可以作为通知抽象的 fallback。
+  - `ICompressor` 已存在于 `LanTalk.Core/Compression`，但尚未进入实际文件传输管道。
+  - 私聊 / 群组文本 E2EE、离线补发、批量文件传输和断点续传都已落地，可作为附件加密的兼容锚点。
+- 当前仓库里仍然明确缺失的部分：
+  - `ConsoleLanTalkLogger` 只有控制台输出，没有文件日志、滚动和长度保护。
+  - `MainWindow.axaml` 的最近会话、联系人分组和消息区仍以 `ItemsControl` 为主，尚未利用虚拟化。
+  - 没有聊天记录 / 文件记录导出入口，也没有压缩选项或开机自启设置。
+  - README / `docs/test-plan.md` 仍保留旧阶段口径，未按“已完成 / 进行中 / 暂未实现”和“待人工验收项”重新收口。
+- Windows 本机验证时，`dotnet build` 和 `dotnet test` 不能并行运行：并行执行会因为 `VBCSCompiler` 占用 `LanTalk.Core.dll` 触发 `CS2012` 文件锁错误；后续应统一采用串行验证。
+
 ## 资源
 - `C:\pr\LanTalk\AGENTS.md`：主要 Agent / 项目规则。
 - `C:\pr\LanTalk\lan_talk_codex项目说明文档.md`：项目需求、架构、里程碑、验收要求。

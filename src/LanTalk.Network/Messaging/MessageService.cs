@@ -118,14 +118,15 @@ public sealed class MessageService : IAsyncDisposable
         _logger.Info($"已关闭与 {receiver.UserId} 的端到端加密会话。");
     }
 
-    public Task SendPrivateMessageAsync(AppSettings localSettings, UserInfo receiver, ChatMessage message, CancellationToken cancellationToken = default)
+    public async Task SendPrivateMessageAsync(AppSettings localSettings, UserInfo receiver, ChatMessage message, CancellationToken cancellationToken = default)
     {
         var payload = new TextMessagePayload(message.MessageId, message.SessionId, message.Content);
         var packet = CreatePrivateMessagePacket(localSettings.UserId, receiver.UserId, payload);
-        return _client.SendAsync(receiver.IpAddress, receiver.MessagePort, packet, cancellationToken);
+        await _client.SendAsync(receiver.IpAddress, receiver.MessagePort, packet, cancellationToken).ConfigureAwait(false);
+        _logger.Info($"私聊消息已发送：{message.MessageId} -> {receiver.Nickname}({receiver.UserId})。");
     }
 
-    public Task SendFileRequestAsync(AppSettings localSettings, UserInfo receiver, FileTransferRequest request, CancellationToken cancellationToken = default)
+    public async Task SendFileRequestAsync(AppSettings localSettings, UserInfo receiver, FileTransferRequest request, CancellationToken cancellationToken = default)
     {
         var packet = new NetworkPacket
         {
@@ -135,10 +136,11 @@ public sealed class MessageService : IAsyncDisposable
             PayloadJson = JsonSerializer.Serialize(request, LanTalkJsonContext.Default.FileTransferRequest)
         };
 
-        return _client.SendAsync(receiver.IpAddress, receiver.MessagePort, packet, cancellationToken);
+        await _client.SendAsync(receiver.IpAddress, receiver.MessagePort, packet, cancellationToken).ConfigureAwait(false);
+        _logger.Info($"{request.FileName} 的文件请求已发送给 {receiver.Nickname}({receiver.UserId})。");
     }
 
-    public Task SendFileResponseAsync(AppSettings localSettings, UserInfo receiver, FileTransferResponse response, CancellationToken cancellationToken = default)
+    public async Task SendFileResponseAsync(AppSettings localSettings, UserInfo receiver, FileTransferResponse response, CancellationToken cancellationToken = default)
     {
         var packet = new NetworkPacket
         {
@@ -148,10 +150,11 @@ public sealed class MessageService : IAsyncDisposable
             PayloadJson = JsonSerializer.Serialize(response, LanTalkJsonContext.Default.FileTransferResponse)
         };
 
-        return _client.SendAsync(receiver.IpAddress, receiver.MessagePort, packet, cancellationToken);
+        await _client.SendAsync(receiver.IpAddress, receiver.MessagePort, packet, cancellationToken).ConfigureAwait(false);
+        _logger.Info($"文件响应已发送：{response.FileId} -> {receiver.Nickname}({receiver.UserId})，结果 {(response.Accepted ? "接受" : "拒绝")}。");
     }
 
-    public Task SendFileFinishedAsync(AppSettings localSettings, UserInfo receiver, string fileId, CancellationToken cancellationToken = default)
+    public async Task SendFileFinishedAsync(AppSettings localSettings, UserInfo receiver, string fileId, CancellationToken cancellationToken = default)
     {
         var packet = new NetworkPacket
         {
@@ -161,10 +164,11 @@ public sealed class MessageService : IAsyncDisposable
             PayloadJson = JsonSerializer.Serialize(new FileTransferFinished(fileId), LanTalkJsonContext.Default.FileTransferFinished)
         };
 
-        return _client.SendAsync(receiver.IpAddress, receiver.MessagePort, packet, cancellationToken);
+        await _client.SendAsync(receiver.IpAddress, receiver.MessagePort, packet, cancellationToken).ConfigureAwait(false);
+        _logger.Info($"文件完成确认已发送：{fileId} -> {receiver.Nickname}({receiver.UserId})。");
     }
 
-    public Task SendErrorAsync(AppSettings localSettings, UserInfo receiver, ErrorPayload error, CancellationToken cancellationToken = default)
+    public async Task SendErrorAsync(AppSettings localSettings, UserInfo receiver, ErrorPayload error, CancellationToken cancellationToken = default)
     {
         var packet = new NetworkPacket
         {
@@ -174,10 +178,11 @@ public sealed class MessageService : IAsyncDisposable
             PayloadJson = JsonSerializer.Serialize(error, LanTalkJsonContext.Default.ErrorPayload)
         };
 
-        return _client.SendAsync(receiver.IpAddress, receiver.MessagePort, packet, cancellationToken);
+        await _client.SendAsync(receiver.IpAddress, receiver.MessagePort, packet, cancellationToken).ConfigureAwait(false);
+        _logger.Warning($"错误通知已发送：{error.Code} -> {receiver.Nickname}({receiver.UserId})。");
     }
 
-    public Task SendReadReceiptAsync(AppSettings localSettings, UserInfo receiver, MessageReadReceiptPayload receipt, CancellationToken cancellationToken = default)
+    public async Task SendReadReceiptAsync(AppSettings localSettings, UserInfo receiver, MessageReadReceiptPayload receipt, CancellationToken cancellationToken = default)
     {
         var packet = new NetworkPacket
         {
@@ -187,10 +192,11 @@ public sealed class MessageService : IAsyncDisposable
             PayloadJson = JsonSerializer.Serialize(receipt, LanTalkJsonContext.Default.MessageReadReceiptPayload)
         };
 
-        return _client.SendAsync(receiver.IpAddress, receiver.MessagePort, packet, cancellationToken);
+        await _client.SendAsync(receiver.IpAddress, receiver.MessagePort, packet, cancellationToken).ConfigureAwait(false);
+        _logger.Info($"已读回执已发送：{receipt.MessageId} -> {receiver.Nickname}({receiver.UserId})。");
     }
 
-    public Task SendMessageRecallAsync(AppSettings localSettings, UserInfo receiver, MessageRecallPayload recall, CancellationToken cancellationToken = default)
+    public async Task SendMessageRecallAsync(AppSettings localSettings, UserInfo receiver, MessageRecallPayload recall, CancellationToken cancellationToken = default)
     {
         var packet = new NetworkPacket
         {
@@ -200,10 +206,11 @@ public sealed class MessageService : IAsyncDisposable
             PayloadJson = JsonSerializer.Serialize(recall, LanTalkJsonContext.Default.MessageRecallPayload)
         };
 
-        return _client.SendAsync(receiver.IpAddress, receiver.MessagePort, packet, cancellationToken);
+        await _client.SendAsync(receiver.IpAddress, receiver.MessagePort, packet, cancellationToken).ConfigureAwait(false);
+        _logger.Info($"撤回通知已发送：{recall.MessageId} -> {receiver.Nickname}({receiver.UserId})。");
     }
 
-    public Task SendOfflineFileReminderAsync(AppSettings localSettings, UserInfo receiver, OfflineFileReminderPayload reminder, CancellationToken cancellationToken = default)
+    public async Task SendOfflineFileReminderAsync(AppSettings localSettings, UserInfo receiver, OfflineFileReminderPayload reminder, CancellationToken cancellationToken = default)
     {
         var packet = new NetworkPacket
         {
@@ -213,7 +220,8 @@ public sealed class MessageService : IAsyncDisposable
             PayloadJson = JsonSerializer.Serialize(reminder, LanTalkJsonContext.Default.OfflineFileReminderPayload)
         };
 
-        return _client.SendAsync(receiver.IpAddress, receiver.MessagePort, packet, cancellationToken);
+        await _client.SendAsync(receiver.IpAddress, receiver.MessagePort, packet, cancellationToken).ConfigureAwait(false);
+        _logger.Info($"离线文件提醒已发送：{reminder.FileId} -> {receiver.Nickname}({receiver.UserId})。");
     }
 
     public async Task<BroadcastSendResult> BroadcastAsync(AppSettings localSettings, IEnumerable<UserInfo> receivers, string content, CancellationToken cancellationToken = default)
@@ -244,6 +252,7 @@ public sealed class MessageService : IAsyncDisposable
             }
         }
 
+        _logger.Info($"广播发送完成：成功 {success}，失败 {failure}。");
         return new BroadcastSendResult(success, failure);
     }
 
@@ -271,10 +280,11 @@ public sealed class MessageService : IAsyncDisposable
             }
         }
 
+        _logger.Info($"群组消息批量发送完成：群组 {payload.GroupId}，成功 {success}，失败 {failure}，加密 {encrypt}。");
         return new BroadcastSendResult(success, failure);
     }
 
-    public Task SendGroupMessageToAsync(
+    public async Task SendGroupMessageToAsync(
         AppSettings localSettings,
         UserInfo receiver,
         GroupMessagePayload payload,
@@ -282,7 +292,8 @@ public sealed class MessageService : IAsyncDisposable
         CancellationToken cancellationToken = default)
     {
         var packet = CreateGroupMessagePacket(localSettings.UserId, receiver.UserId, payload, encrypt);
-        return _client.SendAsync(receiver.IpAddress, receiver.MessagePort, packet, cancellationToken);
+        await _client.SendAsync(receiver.IpAddress, receiver.MessagePort, packet, cancellationToken).ConfigureAwait(false);
+        _logger.Info($"群组消息已发送：{payload.MessageId} -> {receiver.Nickname}({receiver.UserId})，加密 {encrypt}。");
     }
 
     private NetworkPacket CreatePrivateMessagePacket(string fromUserId, string toUserId, TextMessagePayload payload)

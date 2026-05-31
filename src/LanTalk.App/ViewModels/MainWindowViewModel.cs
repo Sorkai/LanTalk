@@ -175,11 +175,9 @@ public sealed partial class MainWindowViewModel : ViewModelBase
 
     public ObservableCollection<OnlineUserViewModel> RecentSessions { get; } = [];
 
-    public ObservableCollection<OnlineUserViewModel> FilteredOnlineUsers { get; } = [];
-
     public ObservableCollection<OnlineUserViewModel> FilteredRecentSessions { get; } = [];
 
-    public ObservableCollection<ContactGroupViewModel> ContactGroups { get; } = [];
+    public ObservableCollection<object> ContactListEntries { get; } = [];
 
     public ObservableCollection<ChatMessageViewModel> Messages { get; } = [];
 
@@ -195,6 +193,8 @@ public sealed partial class MainWindowViewModel : ViewModelBase
     public int OnlineCount => OnlineUsers.Count(user => user.Status == UserStatus.Online);
 
     public string WindowTitle => TotalUnreadCount > 0 ? $"LanTalk ({TotalUnreadCount})" : "LanTalk";
+
+    public ILanTalkLogger Logger => _logger;
 
     public event EventHandler<UserNotificationEventArgs>? UserNotificationRequested;
 
@@ -709,6 +709,7 @@ public sealed partial class MainWindowViewModel : ViewModelBase
         });
 
         await _messageService.SendFileResponseAsync(_settings, ToUserInfo(sender), new FileTransferResponse(request.FileId, true, ResumeOffset: resumeOffset));
+        _logger.Info($"已接受{GetTransferKindText(request.TransferKind)}：{request.FileName}，续传偏移 {resumeOffset}。");
         StatusMessage = $"已接受文件：{request.FileName}";
         IsFileRequestPaneOpen = false;
     }
@@ -726,6 +727,7 @@ public sealed partial class MainWindowViewModel : ViewModelBase
         if (sender is not null)
         {
             await _messageService.SendFileResponseAsync(_settings, ToUserInfo(sender), new FileTransferResponse(request.FileId, false, "接收方拒绝"));
+            _logger.Info($"已拒绝{GetTransferKindText(request.TransferKind)}：{request.FileName}。");
         }
 
         if (_incomingFileMessages.TryGetValue(request.FileId, out var fileMessage))
@@ -1677,6 +1679,7 @@ public sealed partial class MainWindowViewModel : ViewModelBase
 
     public async Task ShutdownAsync()
     {
+        _logger.Info("程序正在关闭，准备停止发现、消息与文件监听。");
         _discoveryService.UsersChanged -= OnDiscoveryUsersChanged;
         _messageService.PacketReceived -= OnMessagePacketReceived;
         if (_fileServerCts is not null)
@@ -1696,6 +1699,7 @@ public sealed partial class MainWindowViewModel : ViewModelBase
         await _messageService.StopAsync().ConfigureAwait(false);
         await _discoveryService.StopAsync().ConfigureAwait(false);
         await Dispatcher.UIThread.InvokeAsync(() => LocalStatusText = "离线");
+        _logger.Info("程序已关闭，网络监听与后台任务已停止。");
     }
 
     private void OnDiscoveryUsersChanged(object? sender, IReadOnlyCollection<UserInfo> users)
@@ -2386,6 +2390,7 @@ public sealed partial class MainWindowViewModel : ViewModelBase
                 fileMessage.StatusText = groupState.BuildStatus(value);
             });
 
+            _logger.Info($"开始发送文件：{fileMessage.FileName} -> {receiver.Nickname}({receiver.UserId})，续传偏移 {resumeOffset}。");
             await _fileTransferService.SendFileAsync(receiver.IpAddress, receiver.FilePort, response.FileId, path, progress, resumeOffset);
             if (groupState is null)
             {
@@ -2508,6 +2513,7 @@ public sealed partial class MainWindowViewModel : ViewModelBase
             try
             {
                 await SaveOutgoingFileStatusAsync(item.FileId, FileTransferStatus.Transferring, resumeOffset);
+                _logger.Info($"开始发送{GetTransferKindText(batchTransfer.TransferKind)}项：{item.FileName} -> {batchTransfer.Receiver.Nickname}({batchTransfer.Receiver.UserId})，续传偏移 {resumeOffset}。");
                 await _fileTransferService.SendFileAsync(
                     batchTransfer.Receiver.IpAddress,
                     batchTransfer.Receiver.FilePort,
@@ -2540,6 +2546,7 @@ public sealed partial class MainWindowViewModel : ViewModelBase
         }
 
         StatusMessage = $"{GetTransferKindText(batchTransfer.TransferKind)}已发送，等待对方确认。";
+        _logger.Info($"{GetTransferKindText(batchTransfer.TransferKind)}请求已全部发出，等待 {batchTransfer.Receiver.Nickname}({batchTransfer.Receiver.UserId}) 确认接收。");
     }
 
     private async Task HandleFileFinishedAsync(NetworkPacket packet)
@@ -2555,6 +2562,7 @@ public sealed partial class MainWindowViewModel : ViewModelBase
             outgoingBatchState.MarkCompleted(finished.FileId);
             outgoingBatchState.Apply();
             await SaveOutgoingFileStatusAsync(finished.FileId, FileTransferStatus.Completed);
+            _logger.Info($"{GetTransferKindText(outgoingBatchState.TransferKind)}项已收到对方完成确认：{finished.FileId}。");
             StatusMessage = outgoingBatchState.IsComplete
                 ? $"{GetTransferKindText(outgoingBatchState.TransferKind)}已全部接收。"
                 : $"{GetTransferKindText(outgoingBatchState.TransferKind)}已有文件完成接收。";
@@ -2577,6 +2585,7 @@ public sealed partial class MainWindowViewModel : ViewModelBase
             }
 
             await SaveOutgoingFileStatusAsync(finished.FileId, FileTransferStatus.Completed);
+            _logger.Info($"发送方收到完成确认：{outgoingMessage.FileName} ({finished.FileId})。");
             return;
         }
 
@@ -2586,6 +2595,7 @@ public sealed partial class MainWindowViewModel : ViewModelBase
             incomingMessage.StatusText = "接收完成";
             await SaveIncomingFileStatusAsync(finished.FileId, FileTransferStatus.Completed);
             StatusMessage = $"文件接收完成：{incomingMessage.FileName}";
+            _logger.Info($"接收方完成落盘：{incomingMessage.FileName} ({finished.FileId})。");
         }
     }
 
@@ -2841,16 +2851,24 @@ public sealed partial class MainWindowViewModel : ViewModelBase
         {
             existing = OnlineUserViewModel.FromUser(user);
             OnlineUsers.Add(existing);
+            _logger.Info($"发现用户：{user.Nickname}({user.UserId})，状态 {user.Status}，地址 {user.IpAddress}:{user.MessagePort}/{user.FilePort}。");
             RefreshFilteredUsers();
             return existing;
         }
 
+        var previousStatus = existing.Status;
+        var previousIpAddress = existing.IpAddress;
         existing.Nickname = user.Nickname;
         existing.Department = user.Department;
         existing.IpAddress = user.IpAddress;
         existing.MessagePort = user.MessagePort;
         existing.FilePort = user.FilePort;
         existing.Status = user.Status;
+
+        if (previousStatus != user.Status || !string.Equals(previousIpAddress, user.IpAddress, StringComparison.Ordinal))
+        {
+            _logger.Info($"用户状态更新：{user.Nickname}({user.UserId}) => {user.Status}，地址 {user.IpAddress}:{user.MessagePort}/{user.FilePort}。");
+        }
 
         if (string.IsNullOrWhiteSpace(existing.LastMessage) ||
             existing.LastMessage is "等待重新上线" or "已离线" or "可以开始聊天" or "已记录为已知联系人")
@@ -2944,17 +2962,24 @@ public sealed partial class MainWindowViewModel : ViewModelBase
             .ThenBy(user => user.Nickname, StringComparer.OrdinalIgnoreCase)
             .ToArray();
 
-        ReplaceCollection(FilteredOnlineUsers, filteredUsers);
-        ReplaceCollection(
-            ContactGroups,
-            filteredUsers
-                .GroupBy(user => user.DepartmentText, StringComparer.OrdinalIgnoreCase)
-                .OrderBy(group => group.Key, StringComparer.OrdinalIgnoreCase)
-                .Select(group => new ContactGroupViewModel(
-                    group.Key,
-                    group
-                        .OrderByDescending(user => user.Status == UserStatus.Online)
-                        .ThenBy(user => user.Nickname, StringComparer.OrdinalIgnoreCase))));
+        var contactEntries = new List<object>();
+        foreach (var group in filteredUsers
+                     .GroupBy(user => user.DepartmentText, StringComparer.OrdinalIgnoreCase)
+                     .OrderBy(group => group.Key, StringComparer.OrdinalIgnoreCase))
+        {
+            var groupViewModel = new ContactGroupViewModel(
+                group.Key,
+                group
+                    .OrderByDescending(user => user.Status == UserStatus.Online)
+                    .ThenBy(user => user.Nickname, StringComparer.OrdinalIgnoreCase));
+            contactEntries.Add(groupViewModel);
+            foreach (var user in groupViewModel.Users)
+            {
+                contactEntries.Add(user);
+            }
+        }
+
+        ReplaceCollection(ContactListEntries, contactEntries);
     }
 
     private static bool MatchesSearch(OnlineUserViewModel user, string query)
@@ -3044,6 +3069,7 @@ public sealed partial class MainWindowViewModel : ViewModelBase
             if (sender.Status == UserStatus.Online)
             {
                 await _messageService.SendReadReceiptAsync(_settings, sender, receipt);
+                _logger.Info($"已发送群组已读回执：消息 {message.MessageId} -> {sender.Nickname}({sender.UserId})。");
                 return;
             }
 
@@ -3055,6 +3081,7 @@ public sealed partial class MainWindowViewModel : ViewModelBase
         if (receiver.Status == UserStatus.Online)
         {
             await _messageService.SendReadReceiptAsync(_settings, receiver, receipt);
+            _logger.Info($"已发送私聊已读回执：消息 {message.MessageId} -> {receiver.Nickname}({receiver.UserId})。");
             return;
         }
 
@@ -3070,6 +3097,7 @@ public sealed partial class MainWindowViewModel : ViewModelBase
             try
             {
                 await _messageService.SendMessageRecallAsync(_settings, receiver, payload);
+                _logger.Info($"已发送撤回通知：消息 {payload.MessageId} -> {receiver.Nickname}({receiver.UserId})。");
                 return;
             }
             catch (Exception ex)
@@ -3233,6 +3261,7 @@ public sealed partial class MainWindowViewModel : ViewModelBase
         string reason,
         CancellationToken cancellationToken = default)
     {
+        _logger.Warning($"群组消息已加入补发队列：接收者 {recipientId}，消息 {payload.MessageId}，原因：{reason}");
         return _outgoingDeliveryRepository.SaveAsync(new OutgoingDeliveryRecord
         {
             DeliveryId = CreateDeliveryId(PacketType.GroupMessage, recipientId, payload.MessageId),
@@ -3273,6 +3302,7 @@ public sealed partial class MainWindowViewModel : ViewModelBase
         CancellationToken cancellationToken = default)
     {
         var payloadJson = JsonSerializer.Serialize(request, LanTalkJsonContext.Default.FileTransferRequest);
+        _logger.Warning($"{GetTransferKindText(request.TransferKind)}已加入补发队列：接收者 {recipientId}，文件 {request.FileName}，原因：{reason}");
         return _outgoingDeliveryRepository.SaveAsync(new OutgoingDeliveryRecord
         {
             DeliveryId = CreateDeliveryId(PacketType.FileRequest, recipientId, request.FileId),
@@ -3293,6 +3323,7 @@ public sealed partial class MainWindowViewModel : ViewModelBase
         string reason,
         CancellationToken cancellationToken = default)
     {
+        _logger.Warning($"{packetType} 已加入补发队列：接收者 {recipientId}，消息 {messageId}，原因：{reason}");
         return _outgoingDeliveryRepository.SaveAsync(new OutgoingDeliveryRecord
         {
             DeliveryId = CreateDeliveryId(packetType, recipientId, messageId),
@@ -3323,6 +3354,11 @@ public sealed partial class MainWindowViewModel : ViewModelBase
         {
             var receiver = ToUserInfo(user);
             var records = await _outgoingDeliveryRepository.LoadForRecipientAsync(user.UserId);
+            if (records.Count > 0)
+            {
+                _logger.Info($"开始补发 {records.Count} 条离线记录给 {user.Nickname}({user.UserId})。");
+            }
+
             foreach (var record in records)
             {
                 if (record.PacketType == PacketType.GroupMessage)
@@ -3393,6 +3429,7 @@ public sealed partial class MainWindowViewModel : ViewModelBase
         {
             await _messageService.SendGroupMessageToAsync(_settings, receiver, payload, record.RequiresEncryption);
             await _outgoingDeliveryRepository.DeleteAsync(record.DeliveryId);
+            _logger.Info($"已补发群组消息：{payload.MessageId} -> {receiver.Nickname}({receiver.UserId})。");
             StatusMessage = record.RequiresEncryption
                 ? $"已向 {receiver.Nickname} 加密补发群组“{payload.GroupName}”的离线消息。"
                 : $"已向 {receiver.Nickname} 补发群组“{payload.GroupName}”的离线消息。";
@@ -3417,6 +3454,7 @@ public sealed partial class MainWindowViewModel : ViewModelBase
         {
             await _messageService.SendReadReceiptAsync(_settings, receiver, payload);
             await _outgoingDeliveryRepository.DeleteAsync(record.DeliveryId);
+            _logger.Info($"已补发已读回执：消息 {payload.MessageId} -> {receiver.Nickname}({receiver.UserId})。");
         }
         catch (Exception ex)
         {
@@ -3438,6 +3476,7 @@ public sealed partial class MainWindowViewModel : ViewModelBase
         {
             await _messageService.SendMessageRecallAsync(_settings, receiver, payload);
             await _outgoingDeliveryRepository.DeleteAsync(record.DeliveryId);
+            _logger.Info($"已补发撤回通知：消息 {payload.MessageId} -> {receiver.Nickname}({receiver.UserId})。");
         }
         catch (Exception ex)
         {
@@ -3480,6 +3519,7 @@ public sealed partial class MainWindowViewModel : ViewModelBase
             await SendOfflineFileReminderForRequestAsync(receiver, request);
             await _messageService.SendFileRequestAsync(_settings, receiver, request);
             await _outgoingDeliveryRepository.DeleteAsync(record.DeliveryId);
+            _logger.Info($"已补发群组附件请求：{request.FileName} -> {receiver.Nickname}({receiver.UserId})。");
             message.StatusText = "离线补发请求已发送";
             StatusMessage = $"已向 {receiver.Nickname} 补发群组附件请求：{request.FileName}";
         }
@@ -3542,6 +3582,7 @@ public sealed partial class MainWindowViewModel : ViewModelBase
             await SendOfflineFileReminderForRequestAsync(receiver, request);
             await _messageService.SendFileRequestAsync(_settings, receiver, request);
             await _outgoingDeliveryRepository.DeleteAsync(record.DeliveryId);
+            _logger.Info($"已补发群组{GetTransferKindText(request.TransferKind)}请求：{request.FileName} -> {receiver.Nickname}({receiver.UserId})。");
             message.StatusText = "离线补发请求已发送";
             StatusMessage = $"已向 {receiver.Nickname} 补发群组{GetTransferKindText(request.TransferKind)}请求：{request.FileName}";
         }
@@ -3574,6 +3615,7 @@ public sealed partial class MainWindowViewModel : ViewModelBase
                 request.GroupKind,
                 DateTimeOffset.Now);
             await _messageService.SendOfflineFileReminderAsync(_settings, receiver, reminder);
+            _logger.Info($"已发送离线{GetTransferKindText(request.TransferKind)}提醒：{request.FileName} -> {receiver.Nickname}({receiver.UserId})。");
         }
         catch (Exception ex)
         {
@@ -3706,10 +3748,35 @@ public sealed partial class MainWindowViewModel : ViewModelBase
         ObservableCollection<T> target,
         IEnumerable<T> source)
     {
-        target.Clear();
-        foreach (var item in source)
+        var items = source.ToList();
+
+        for (var index = 0; index < items.Count; index++)
         {
+            var item = items[index];
+            if (index < target.Count)
+            {
+                if (ReferenceEquals(target[index], item) || EqualityComparer<T>.Default.Equals(target[index], item))
+                {
+                    continue;
+                }
+
+                var existingIndex = target.IndexOf(item);
+                if (existingIndex >= 0)
+                {
+                    target.Move(existingIndex, index);
+                    continue;
+                }
+
+                target.Insert(index, item);
+                continue;
+            }
+
             target.Add(item);
+        }
+
+        while (target.Count > items.Count)
+        {
+            target.RemoveAt(target.Count - 1);
         }
     }
 

@@ -4,7 +4,7 @@
 将 LanTalk 开发成一个可编译、可运行的 C# / .NET 10 局域网即时通信 MVP，具备 Avalonia + SukiUI 界面、本机设置、UDP 自动发现、TCP 私聊、广播消息、单文件传输、SQLite 历史记录、基础日志与异常处理，并保持 Native AOT 友好的代码结构。
 
 ## 当前阶段
-阶段 21 - 已读回执、消息撤回与离线文件提醒
+阶段 25 - 附件加密、导出与压缩管道
 
 ## 范围边界
 - 优先完成 MVP / P0：项目骨架、Telegram 风格 UI、本机设置、UDP 自动发现、在线用户、TCP 私聊、SQLite 历史记录、广播、单文件传输、基础异常与日志。
@@ -228,6 +228,52 @@
 - [x] 更新 JSON Source Generator、README、协议文档和测试计划。
 - [x] 补充自动化测试并执行 `dotnet build LanTalk.sln -v:minimal` 与 `dotnet test LanTalk.sln -v:minimal`。
 - **状态：** 已完成并通过自动化验证；仍建议双机/三机环境补充已读人数递增、撤回补发和离线文件提醒实测。
+
+### 阶段 22：交付闭环与发布资料
+- [ ] 更新 `README.md`：补齐“已完成 / 进行中 / 暂未实现”能力清单、已知限制、发布路径与已验证命令。
+- [ ] 更新 `docs/test-plan.md`：区分自动化闭环、待人工验收项与发布验证步骤。
+- [ ] 新增或整理发布说明文档，明确普通 Release / Native AOT 命令、输出目录与已知 Avalonia DataGrid AOT 警告。
+- [ ] 更新 `task_plan.md`、`progress.md`、`next-development-plan.md` 的阶段状态，保留人工验收项但不再阻塞代码主线。
+- [ ] 串行执行 `dotnet build LanTalk.sln -v:minimal`、`dotnet test LanTalk.sln -v:minimal` 作为文档收口阶段基线。
+- **状态：** 进行中
+
+### 阶段 23：日志能力生产化
+- [x] 将 `ConsoleLanTalkLogger` 扩展为控制台 + 文件双写日志，自动创建 `%AppData%\\LanTalk\\logs`。
+- [x] 支持按天滚动和单文件长度保护，避免日志无限增长。
+- [x] 错误日志补齐异常类型与完整堆栈，同时保持现有 `ILanTalkLogger` 调用点兼容。
+- [x] 在 App / Network / Storage 启动、关闭、失败重试、离线补发、已读回执、撤回和文件续传路径补齐关键日志上下文。
+- [x] 补充自动化测试，并串行执行 build / test 验证。
+- **状态：** 已完成并通过自动化验证。
+
+### 阶段 24：列表虚拟化与刷新优化
+- [x] 将左侧最近会话、联系人分组与右侧消息区迁移到支持虚拟化的控件或面板。
+- [x] 保持最近 50 条消息分页策略，避免因为虚拟化改动破坏历史加载行为。
+- [x] 优化 `MainWindowViewModel` 的筛选、排序和集合替换，尽量减少整表重建。
+- [x] 补充必要的 UI 侧状态验证，并执行 build / test 回归。
+- **状态：** 已完成并通过自动化验证与桌面启动冒烟。
+
+### 阶段 25：附件加密、导出与压缩管道
+- [ ] 为私聊和群组附件定义兼容旧端的加密元数据与传输封装，不破坏现有 `FileTransferRequest` / `FileTransferResponse` 流程。
+- [ ] 在文件传输客户端 / 服务端增加流式加解密能力，确保解密失败、认证失败有明确错误事件。
+- [ ] 增加会话消息导出（CSV / JSON）和文件传输记录导出（CSV），并提供异步 UI 入口。
+- [ ] 将 `ICompressor` 落地为可切换实现，至少提供 `Noop` 和 `GZip`，默认关闭以保持协议兼容。
+- [ ] 补充序列化、仓储、文件传输和消息服务测试，并执行 build / test 回归。
+- **状态：** 待开始
+
+### 阶段 26：通知抽象与开机自启
+- [ ] 抽象桌面通知接口，Windows 下优先尝试系统通知，不可用时回退到现有自绘 Toast。
+- [ ] 增加 Windows 开机自启平台服务，与设置保存联动，并保证关闭开关不影响普通启动。
+- [ ] 更新设置 UI、README 和平台限制说明。
+- [ ] 执行 build / test，并做 Windows 本机功能验证。
+- **状态：** 待开始
+
+### 阶段 27：最终验证、提交与推送
+- [ ] 串行执行最终 `dotnet build LanTalk.sln -v:minimal`。
+- [ ] 串行执行最终 `dotnet test LanTalk.sln -v:minimal`。
+- [ ] 执行普通 Release publish 并确认产物输出目录。
+- [ ] 执行 Native AOT publish，记录 DataGrid trim / AOT 警告是否仍存在。
+- [ ] 按阶段边界提交并推送到远端。
+- **状态：** 待开始
 
 ## 当前项目状态下推荐的里程碑顺序
 1. 阶段 11 的多机真实验收先等待更多电脑；这是验收证据问题，不阻塞单机功能开发。

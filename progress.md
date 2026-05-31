@@ -638,3 +638,48 @@
 - 当前验证：
   - 中途 `dotnet build LanTalk.sln -v:minimal` 发现 3 个变量名/作用域错误，已修复。
   - `dotnet test LanTalk.sln -v:minimal`：63 项全部通过。
+
+### 阶段 22：交付闭环、生产日志与后续增强
+- **状态：** 进行中。
+- 本轮目标：
+  - 按 `next-development-plan.md` 完整推进下一轮开发任务，并在阶段边界自动提交推送。
+  - 先收口文档和计划文件，再进入日志、性能、安全和平台增强。
+- 已执行操作：
+  - 读取 `AGENTS.md`、`README.md`、`task_plan.md`、`findings.md`、`progress.md`、`docs/test-plan.md` 和 `next-development-plan.md`。
+  - 检索当前仓库的日志、通知、压缩、导出和虚拟化相关实现，确认现有基础与缺口。
+  - 更新 `task_plan.md`，新增阶段 22-27，作为本轮持续开发主线。
+  - 将差距梳理与 Windows 上并行 `build` / `test` 的文件锁问题写入 `findings.md`。
+- 当前验证：
+  - 并行执行 `dotnet build LanTalk.sln -v:minimal` 与 `dotnet test LanTalk.sln -v:minimal` 会触发 `CS2012`，原因是 `VBCSCompiler` 占用 `LanTalk.Core.dll`。
+  - 改为串行后，`dotnet test LanTalk.sln -v:minimal`：63 项全部通过。
+  - 串行重跑 `dotnet build LanTalk.sln -v:minimal`：0 警告，0 错误。
+
+### 阶段 23：日志能力生产化
+- **状态：** 已完成并通过自动化验证。
+- 本轮目标：
+  - 将现有控制台日志升级为可落盘、可滚动、可测试的生产化日志。
+  - 补齐应用生命周期、离线补发、文件续传、已读回执和撤回相关关键日志事件。
+- 已执行操作：
+  - `ConsoleLanTalkLogger` 扩展为控制台 + 文件双写，默认写入 `%AppData%\\LanTalk\\logs\\lantalk-YYYY-MM-DD.log`。
+  - 增加按天轮转和单文件长度保护；错误日志输出完整 `Exception.ToString()`，包含异常类型与堆栈。
+  - MainWindow / App / MainWindowViewModel / MessageService 已补齐启动、关闭、用户状态变化、离线补发、文件收发、已读回执、撤回和离线文件提醒关键日志。
+  - 新增 `ConsoleLanTalkLoggerTests`，覆盖文件写入、异常堆栈、大小轮转和跨天切换。
+- 验证结果：
+  - 首次 `dotnet test LanTalk.sln -v:minimal` 失败：日志测试在读取前未释放句柄，且大小保护下限过高导致轮转测试未命中阈值。
+  - 修复后，`dotnet test LanTalk.sln -v:minimal`：67 项全部通过。
+  - `dotnet build LanTalk.sln -v:minimal`：0 警告，0 错误。
+
+### 阶段 24：列表虚拟化与刷新优化
+- **状态：** 已完成并通过自动化验证与桌面启动冒烟。
+- 本轮目标：
+  - 把左侧最近会话 / 联系人分组和右侧消息区迁移到可虚拟化控件。
+  - 减少 `ObservableCollection` 的整表清空重建，降低切会话和搜索时的 UI 抖动。
+- 已执行操作：
+  - 左侧最近会话改为 `ListBox`，保留现有会话选择和未读显示。
+  - 联系人分组改为扁平化 `ContactListEntries` + `ListBox.DataTemplates`，避免嵌套 `ItemsControl`。
+  - 右侧消息区改为 `ListBox`，并在 code-behind 使用 `ScrollIntoView` 自动滚动到最后一条消息。
+  - `ReplaceCollection` 改为按差异移动 / 插入 / 删除，而不是每次 `Clear + Add` 全量重建。
+- 验证结果：
+  - `dotnet build LanTalk.sln -v:minimal`：0 警告，0 错误。
+  - `dotnet test LanTalk.sln -v:minimal`：67 项全部通过。
+  - 桌面冒烟启动：`dotnet run --project src/LanTalk.App/LanTalk.App.csproj --no-build` 隐藏运行 12 秒，无 `stderr` 输出。

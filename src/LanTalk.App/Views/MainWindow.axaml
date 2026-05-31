@@ -113,98 +113,111 @@
                         </Button>
                     </StackPanel>
 
-                    <ScrollViewer Grid.Row="3">
-                        <StackPanel Spacing="16">
-                            <StackPanel Spacing="8">
-                                <Grid ColumnDefinitions="*,Auto">
-                                    <TextBlock Text="最近会话" Classes="caption" FontWeight="SemiBold"/>
-                                    <TextBlock Grid.Column="1" Text="{Binding FilteredRecentSessions.Count}" Classes="caption"/>
-                                </Grid>
-                                <ItemsControl ItemsSource="{Binding FilteredRecentSessions}">
-                                    <ItemsControl.ItemTemplate>
-                                        <DataTemplate x:DataType="vm:OnlineUserViewModel">
-                                            <Button HorizontalAlignment="Stretch"
-                                                    Padding="8"
-                                                    CornerRadius="8"
-                                                    Background="Transparent"
-                                                    Command="{Binding $parent[Window].DataContext.SelectUserCommand}"
-                                                    CommandParameter="{Binding}">
-                                                <Grid ColumnDefinitions="3,36,*,Auto" ColumnSpacing="8">
-                                                    <Border Width="3"
-                                                            Background="{StaticResource LanTalkBlueBrush}"
-                                                            CornerRadius="2"
-                                                            IsVisible="{Binding IsSelected}"/>
-                                                    <Border Grid.Column="1" Width="36" Height="36" CornerRadius="18" Background="{Binding AvatarBrush}">
-                                                        <TextBlock Text="{Binding AvatarText}" Foreground="White" FontWeight="SemiBold" HorizontalAlignment="Center" VerticalAlignment="Center"/>
-                                                    </Border>
-                                                    <StackPanel Grid.Column="2" Spacing="2">
-                                                        <TextBlock Text="{Binding Nickname}" FontWeight="SemiBold" TextTrimming="CharacterEllipsis"/>
-                                                        <TextBlock Text="{Binding LastMessage}" Classes="caption" TextTrimming="CharacterEllipsis"/>
-                                                    </StackPanel>
-                                                    <Border Grid.Column="3"
-                                                            IsVisible="{Binding UnreadCount, Converter={StaticResource GreaterThanZeroConverter}}"
-                                                            Background="{StaticResource LanTalkBlueBrush}"
-                                                            CornerRadius="10"
-                                                            Padding="6,2"
-                                                            VerticalAlignment="Center">
-                                                        <TextBlock Text="{Binding UnreadCount}" Foreground="White" FontSize="11"/>
-                                                    </Border>
-                                                </Grid>
-                                            </Button>
-                                        </DataTemplate>
-                                    </ItemsControl.ItemTemplate>
-                                </ItemsControl>
-                            </StackPanel>
-
-                            <StackPanel Spacing="8">
-                                <Grid ColumnDefinitions="*,Auto">
-                                    <TextBlock Text="联系人分组" Classes="caption" FontWeight="SemiBold"/>
-                                    <TextBlock Grid.Column="1" Text="{Binding OnlineCount}" Classes="caption"/>
-                                </Grid>
-                                <ItemsControl ItemsSource="{Binding ContactGroups}">
-                                    <ItemsControl.ItemTemplate>
-                                        <DataTemplate x:DataType="vm:ContactGroupViewModel">
-                                            <StackPanel Spacing="6" Margin="0,0,0,8">
-                                                <Grid ColumnDefinitions="*,Auto">
-                                                    <TextBlock Text="{Binding Name}" FontWeight="SemiBold" TextTrimming="CharacterEllipsis"/>
-                                                    <TextBlock Grid.Column="1" Text="{Binding Summary}" Classes="caption"/>
-                                                </Grid>
-                                                <ItemsControl ItemsSource="{Binding Users}">
-                                                    <ItemsControl.ItemTemplate>
-                                                        <DataTemplate x:DataType="vm:OnlineUserViewModel">
-                                                            <Button HorizontalAlignment="Stretch"
-                                                                    Padding="8"
-                                                                    CornerRadius="8"
-                                                                    Background="Transparent"
-                                                                    Command="{Binding $parent[Window].DataContext.SelectUserCommand}"
-                                                                    CommandParameter="{Binding}">
-                                                                <Grid ColumnDefinitions="3,36,*,Auto" ColumnSpacing="8">
-                                                                    <Border Width="3"
-                                                                            Background="{StaticResource LanTalkBlueBrush}"
-                                                                            CornerRadius="2"
-                                                                            IsVisible="{Binding IsSelected}"/>
-                                                                    <Border Grid.Column="1" Width="36" Height="36" CornerRadius="18" Background="{Binding AvatarBrush}">
-                                                                        <TextBlock Text="{Binding AvatarText}" Foreground="White" FontWeight="SemiBold" HorizontalAlignment="Center" VerticalAlignment="Center"/>
-                                                                    </Border>
-                                                                    <StackPanel Grid.Column="2" Spacing="2">
-                                                                        <TextBlock Text="{Binding Nickname}" FontWeight="SemiBold" TextTrimming="CharacterEllipsis"/>
-                                                                        <TextBlock Text="{Binding IpAddress}" Classes="caption"/>
-                                                                    </StackPanel>
-                                                                    <StackPanel Grid.Column="3" HorizontalAlignment="Right" VerticalAlignment="Center">
-                                                                        <TextBlock Text="{Binding StatusText}" Classes="caption"/>
-                                                                    </StackPanel>
-                                                                </Grid>
-                                                            </Button>
-                                                        </DataTemplate>
-                                                    </ItemsControl.ItemTemplate>
-                                                </ItemsControl>
+                    <Grid Grid.Row="3" RowDefinitions="Auto,*,Auto,*" RowSpacing="12">
+                        <Grid ColumnDefinitions="*,Auto">
+                            <TextBlock Text="最近会话" Classes="caption" FontWeight="SemiBold"/>
+                            <TextBlock Grid.Column="1" Text="{Binding FilteredRecentSessions.Count}" Classes="caption"/>
+                        </Grid>
+                        <ListBox Grid.Row="1"
+                                 SelectedItem="{Binding SelectedUser}"
+                                 Background="Transparent"
+                                 BorderThickness="0"
+                                 ItemsSource="{Binding FilteredRecentSessions}"
+                                 ScrollViewer.HorizontalScrollBarVisibility="Disabled">
+                            <ListBox.Styles>
+                                <Style Selector="ListBoxItem">
+                                    <Setter Property="Padding" Value="0"/>
+                                    <Setter Property="Margin" Value="0"/>
+                                    <Setter Property="BorderThickness" Value="0"/>
+                                    <Setter Property="Background" Value="Transparent"/>
+                                    <Setter Property="HorizontalContentAlignment" Value="Stretch"/>
+                                </Style>
+                                <Style Selector="ListBoxItem:selected">
+                                    <Setter Property="Background" Value="Transparent"/>
+                                </Style>
+                            </ListBox.Styles>
+                            <ListBox.ItemTemplate>
+                                <DataTemplate x:DataType="vm:OnlineUserViewModel">
+                                    <Border Padding="8" CornerRadius="8" Background="Transparent">
+                                        <Grid ColumnDefinitions="3,36,*,Auto" ColumnSpacing="8">
+                                            <Border Width="3"
+                                                    Background="{StaticResource LanTalkBlueBrush}"
+                                                    CornerRadius="2"
+                                                    IsVisible="{Binding IsSelected}"/>
+                                            <Border Grid.Column="1" Width="36" Height="36" CornerRadius="18" Background="{Binding AvatarBrush}">
+                                                <TextBlock Text="{Binding AvatarText}" Foreground="White" FontWeight="SemiBold" HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                                            </Border>
+                                            <StackPanel Grid.Column="2" Spacing="2">
+                                                <TextBlock Text="{Binding Nickname}" FontWeight="SemiBold" TextTrimming="CharacterEllipsis"/>
+                                                <TextBlock Text="{Binding LastMessage}" Classes="caption" TextTrimming="CharacterEllipsis"/>
                                             </StackPanel>
-                                        </DataTemplate>
-                                    </ItemsControl.ItemTemplate>
-                                </ItemsControl>
-                            </StackPanel>
-                        </StackPanel>
-                    </ScrollViewer>
+                                            <Border Grid.Column="3"
+                                                    IsVisible="{Binding UnreadCount, Converter={StaticResource GreaterThanZeroConverter}}"
+                                                    Background="{StaticResource LanTalkBlueBrush}"
+                                                    CornerRadius="10"
+                                                    Padding="6,2"
+                                                    VerticalAlignment="Center">
+                                                <TextBlock Text="{Binding UnreadCount}" Foreground="White" FontSize="11"/>
+                                            </Border>
+                                        </Grid>
+                                    </Border>
+                                </DataTemplate>
+                            </ListBox.ItemTemplate>
+                        </ListBox>
+
+                        <Grid Grid.Row="2" ColumnDefinitions="*,Auto">
+                            <TextBlock Text="联系人分组" Classes="caption" FontWeight="SemiBold"/>
+                            <TextBlock Grid.Column="1" Text="{Binding OnlineCount}" Classes="caption"/>
+                        </Grid>
+                        <ListBox Grid.Row="3"
+                                 Background="Transparent"
+                                 BorderThickness="0"
+                                 ItemsSource="{Binding ContactListEntries}"
+                                 ScrollViewer.HorizontalScrollBarVisibility="Disabled">
+                            <ListBox.Styles>
+                                <Style Selector="ListBoxItem">
+                                    <Setter Property="Padding" Value="0"/>
+                                    <Setter Property="Margin" Value="0"/>
+                                    <Setter Property="BorderThickness" Value="0"/>
+                                    <Setter Property="Background" Value="Transparent"/>
+                                    <Setter Property="HorizontalContentAlignment" Value="Stretch"/>
+                                </Style>
+                            </ListBox.Styles>
+                            <ListBox.DataTemplates>
+                                <DataTemplate x:DataType="vm:ContactGroupViewModel">
+                                    <Grid ColumnDefinitions="*,Auto" Margin="0,8,0,4" IsHitTestVisible="False">
+                                        <TextBlock Text="{Binding Name}" FontWeight="SemiBold" TextTrimming="CharacterEllipsis"/>
+                                        <TextBlock Grid.Column="1" Text="{Binding Summary}" Classes="caption"/>
+                                    </Grid>
+                                </DataTemplate>
+                                <DataTemplate x:DataType="vm:OnlineUserViewModel">
+                                    <Button HorizontalAlignment="Stretch"
+                                            Padding="8"
+                                            CornerRadius="8"
+                                            Background="Transparent"
+                                            Command="{Binding $parent[Window].DataContext.SelectUserCommand}"
+                                            CommandParameter="{Binding}">
+                                        <Grid ColumnDefinitions="3,36,*,Auto" ColumnSpacing="8">
+                                            <Border Width="3"
+                                                    Background="{StaticResource LanTalkBlueBrush}"
+                                                    CornerRadius="2"
+                                                    IsVisible="{Binding IsSelected}"/>
+                                            <Border Grid.Column="1" Width="36" Height="36" CornerRadius="18" Background="{Binding AvatarBrush}">
+                                                <TextBlock Text="{Binding AvatarText}" Foreground="White" FontWeight="SemiBold" HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                                            </Border>
+                                            <StackPanel Grid.Column="2" Spacing="2">
+                                                <TextBlock Text="{Binding Nickname}" FontWeight="SemiBold" TextTrimming="CharacterEllipsis"/>
+                                                <TextBlock Text="{Binding IpAddress}" Classes="caption"/>
+                                            </StackPanel>
+                                            <StackPanel Grid.Column="3" HorizontalAlignment="Right" VerticalAlignment="Center">
+                                                <TextBlock Text="{Binding StatusText}" Classes="caption"/>
+                                            </StackPanel>
+                                        </Grid>
+                                    </Button>
+                                </DataTemplate>
+                            </ListBox.DataTemplates>
+                        </ListBox>
+                    </Grid>
 
                     <Border Grid.Row="4"
                             Background="{StaticResource LanTalkBroadcastBrush}"
@@ -263,120 +276,131 @@
                     </Grid>
                 </Border>
 
-                <ScrollViewer x:Name="MessagesScrollViewer"
-                              Grid.Row="2"
-                              Padding="20"
-                              ClipToBounds="True"
-                              HorizontalScrollBarVisibility="Disabled"
-                              VerticalScrollBarVisibility="Auto">
-                    <ItemsControl ItemsSource="{Binding Messages}">
-                        <ItemsControl.ItemTemplate>
-                            <DataTemplate x:DataType="vm:ChatMessageViewModel">
-                                <Grid Margin="0,6">
-                                    <StackPanel IsVisible="{Binding IsMine, Converter={StaticResource InverseBoolConverter}}"
-                                                HorizontalAlignment="Left"
-                                                Spacing="4">
-                                        <TextBlock Text="{Binding SenderName}" Classes="caption"/>
-                                        <Border Classes="messageBubble messageOther">
-                                            <StackPanel Spacing="6">
-                                                <TextBlock Text="{Binding Content}" TextWrapping="Wrap" Foreground="{StaticResource LanTalkTextBrush}" IsVisible="{Binding HasContentText}"/>
-                                                <Border Classes="fileCard" IsVisible="{Binding IsImage}">
-                                                    <StackPanel Spacing="8">
-                                                        <Button Padding="0"
-                                                                Background="Transparent"
-                                                                BorderThickness="0"
-                                                                HorizontalAlignment="Left"
-                                                                Command="{Binding $parent[Window].DataContext.OpenImagePreviewCommand}"
-                                                                CommandParameter="{Binding}"
-                                                                IsVisible="{Binding CanPreviewImage}">
-                                                            <Image Source="{Binding ImageSource}"
-                                                                   MaxWidth="260"
-                                                                   MaxHeight="180"
-                                                                   Stretch="Uniform"/>
-                                                        </Button>
-                                                        <TextBlock Text="图片接收后可预览"
-                                                                   Classes="caption"
-                                                                   IsVisible="{Binding CanPreviewImage, Converter={StaticResource InverseBoolConverter}}"/>
-                                                        <TextBlock Text="{Binding FileName}" FontWeight="SemiBold"/>
-                                                        <TextBlock Text="{Binding FileSizeText}" Classes="caption"/>
-                                                        <ProgressBar Minimum="0" Maximum="100" Value="{Binding Progress}"/>
-                                                        <TextBlock Text="{Binding StatusText}" Classes="caption"/>
-                                                    </StackPanel>
-                                                </Border>
-                                                <Border Classes="fileCard" IsVisible="{Binding IsFile}">
-                                                    <StackPanel Spacing="6">
-                                                        <TextBlock Text="{Binding FileName}" FontWeight="SemiBold"/>
-                                                        <TextBlock Text="{Binding FileSizeText}" Classes="caption"/>
-                                                        <ProgressBar Minimum="0" Maximum="100" Value="{Binding Progress}"/>
-                                                        <TextBlock Text="{Binding StatusText}" Classes="caption"/>
-                                                    </StackPanel>
-                                                </Border>
-                                                <TextBlock Text="{Binding TimeText}" Classes="caption" HorizontalAlignment="Right"/>
-                                            </StackPanel>
-                                        </Border>
-                                    </StackPanel>
+                <ListBox x:Name="MessagesListBox"
+                         Grid.Row="2"
+                         Background="Transparent"
+                         BorderThickness="0"
+                         ItemsSource="{Binding Messages}"
+                         Padding="20"
+                         ScrollViewer.HorizontalScrollBarVisibility="Disabled">
+                    <ListBox.Styles>
+                        <Style Selector="ListBoxItem">
+                            <Setter Property="Padding" Value="0"/>
+                            <Setter Property="Margin" Value="0"/>
+                            <Setter Property="BorderThickness" Value="0"/>
+                            <Setter Property="Background" Value="Transparent"/>
+                            <Setter Property="HorizontalContentAlignment" Value="Stretch"/>
+                        </Style>
+                        <Style Selector="ListBoxItem:selected">
+                            <Setter Property="Background" Value="Transparent"/>
+                        </Style>
+                    </ListBox.Styles>
+                    <ListBox.ItemTemplate>
+                        <DataTemplate x:DataType="vm:ChatMessageViewModel">
+                            <Grid Margin="0,6">
+                                <StackPanel IsVisible="{Binding IsMine, Converter={StaticResource InverseBoolConverter}}"
+                                            HorizontalAlignment="Left"
+                                            Spacing="4">
+                                    <TextBlock Text="{Binding SenderName}" Classes="caption"/>
+                                    <Border Classes="messageBubble messageOther">
+                                        <StackPanel Spacing="6">
+                                            <TextBlock Text="{Binding Content}" TextWrapping="Wrap" Foreground="{StaticResource LanTalkTextBrush}" IsVisible="{Binding HasContentText}"/>
+                                            <Border Classes="fileCard" IsVisible="{Binding IsImage}">
+                                                <StackPanel Spacing="8">
+                                                    <Button Padding="0"
+                                                            Background="Transparent"
+                                                            BorderThickness="0"
+                                                            HorizontalAlignment="Left"
+                                                            Command="{Binding $parent[Window].DataContext.OpenImagePreviewCommand}"
+                                                            CommandParameter="{Binding}"
+                                                            IsVisible="{Binding CanPreviewImage}">
+                                                        <Image Source="{Binding ImageSource}"
+                                                               MaxWidth="260"
+                                                               MaxHeight="180"
+                                                               Stretch="Uniform"/>
+                                                    </Button>
+                                                    <TextBlock Text="图片接收后可预览"
+                                                               Classes="caption"
+                                                               IsVisible="{Binding CanPreviewImage, Converter={StaticResource InverseBoolConverter}}"/>
+                                                    <TextBlock Text="{Binding FileName}" FontWeight="SemiBold"/>
+                                                    <TextBlock Text="{Binding FileSizeText}" Classes="caption"/>
+                                                    <ProgressBar Minimum="0" Maximum="100" Value="{Binding Progress}"/>
+                                                    <TextBlock Text="{Binding StatusText}" Classes="caption"/>
+                                                </StackPanel>
+                                            </Border>
+                                            <Border Classes="fileCard" IsVisible="{Binding IsFile}">
+                                                <StackPanel Spacing="6">
+                                                    <TextBlock Text="{Binding FileName}" FontWeight="SemiBold"/>
+                                                    <TextBlock Text="{Binding FileSizeText}" Classes="caption"/>
+                                                    <ProgressBar Minimum="0" Maximum="100" Value="{Binding Progress}"/>
+                                                    <TextBlock Text="{Binding StatusText}" Classes="caption"/>
+                                                </StackPanel>
+                                            </Border>
+                                            <TextBlock Text="{Binding TimeText}" Classes="caption" HorizontalAlignment="Right"/>
+                                        </StackPanel>
+                                    </Border>
+                                </StackPanel>
 
-                                    <StackPanel IsVisible="{Binding IsMine}" HorizontalAlignment="Right" Spacing="4">
-                                        <TextBlock Text="{Binding SenderName}" Classes="caption" HorizontalAlignment="Right"/>
-                                        <Border Classes="messageBubble messageMine">
-                                            <StackPanel Spacing="6">
-                                                <TextBlock Text="{Binding Content}" TextWrapping="Wrap" Foreground="White" IsVisible="{Binding HasContentText}"/>
-                                                <Border Classes="fileCard" IsVisible="{Binding IsImage}">
-                                                    <StackPanel Spacing="8">
-                                                        <Button Padding="0"
-                                                                Background="Transparent"
-                                                                BorderThickness="0"
-                                                                HorizontalAlignment="Left"
-                                                                Command="{Binding $parent[Window].DataContext.OpenImagePreviewCommand}"
-                                                                CommandParameter="{Binding}"
-                                                                IsVisible="{Binding CanPreviewImage}">
-                                                            <Image Source="{Binding ImageSource}"
-                                                                   MaxWidth="260"
-                                                                   MaxHeight="180"
-                                                                   Stretch="Uniform"/>
-                                                        </Button>
-                                                        <TextBlock Text="图片文件不可用"
-                                                                   Foreground="#DCEEFF"
-                                                                   FontSize="12"
-                                                                   IsVisible="{Binding CanPreviewImage, Converter={StaticResource InverseBoolConverter}}"/>
-                                                        <TextBlock Text="{Binding FileName}" FontWeight="SemiBold" Foreground="White"/>
-                                                        <TextBlock Text="{Binding FileSizeText}" Foreground="#DCEEFF" FontSize="12"/>
-                                                        <ProgressBar Minimum="0" Maximum="100" Value="{Binding Progress}"/>
-                                                        <TextBlock Text="{Binding StatusText}" Foreground="#DCEEFF" FontSize="12"/>
-                                                    </StackPanel>
-                                                </Border>
-                                                <Border Classes="fileCard" IsVisible="{Binding IsFile}">
-                                                    <StackPanel Spacing="6">
-                                                        <TextBlock Text="{Binding FileName}" FontWeight="SemiBold"/>
-                                                        <TextBlock Text="{Binding FileSizeText}" Classes="caption"/>
-                                                        <ProgressBar Minimum="0" Maximum="100" Value="{Binding Progress}"/>
-                                                        <TextBlock Text="{Binding StatusText}" Classes="caption"/>
-                                                    </StackPanel>
-                                                </Border>
-                                                <Grid ColumnDefinitions="*,Auto" ColumnSpacing="8">
-                                                    <TextBlock Text="{Binding ReadStatusText}"
+                                <StackPanel IsVisible="{Binding IsMine}" HorizontalAlignment="Right" Spacing="4">
+                                    <TextBlock Text="{Binding SenderName}" Classes="caption" HorizontalAlignment="Right"/>
+                                    <Border Classes="messageBubble messageMine">
+                                        <StackPanel Spacing="6">
+                                            <TextBlock Text="{Binding Content}" TextWrapping="Wrap" Foreground="White" IsVisible="{Binding HasContentText}"/>
+                                            <Border Classes="fileCard" IsVisible="{Binding IsImage}">
+                                                <StackPanel Spacing="8">
+                                                    <Button Padding="0"
+                                                            Background="Transparent"
+                                                            BorderThickness="0"
+                                                            HorizontalAlignment="Left"
+                                                            Command="{Binding $parent[Window].DataContext.OpenImagePreviewCommand}"
+                                                            CommandParameter="{Binding}"
+                                                            IsVisible="{Binding CanPreviewImage}">
+                                                        <Image Source="{Binding ImageSource}"
+                                                               MaxWidth="260"
+                                                               MaxHeight="180"
+                                                               Stretch="Uniform"/>
+                                                    </Button>
+                                                    <TextBlock Text="图片文件不可用"
                                                                Foreground="#DCEEFF"
                                                                FontSize="12"
-                                                               IsVisible="{Binding HasReadStatus}"
-                                                               VerticalAlignment="Center"/>
-                                                    <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="8" HorizontalAlignment="Right">
-                                                        <TextBlock Text="{Binding TimeText}" Foreground="#DCEEFF" FontSize="12" VerticalAlignment="Center"/>
-                                                        <Button Content="撤回"
-                                                                Padding="8,2"
-                                                                FontSize="12"
-                                                                Command="{Binding $parent[Window].DataContext.RecallMessageCommand}"
-                                                                CommandParameter="{Binding}"
-                                                                IsVisible="{Binding CanRecall}"/>
-                                                    </StackPanel>
-                                                </Grid>
-                                            </StackPanel>
-                                        </Border>
-                                    </StackPanel>
-                                </Grid>
-                            </DataTemplate>
-                        </ItemsControl.ItemTemplate>
-                    </ItemsControl>
-                </ScrollViewer>
+                                                               IsVisible="{Binding CanPreviewImage, Converter={StaticResource InverseBoolConverter}}"/>
+                                                    <TextBlock Text="{Binding FileName}" FontWeight="SemiBold" Foreground="White"/>
+                                                    <TextBlock Text="{Binding FileSizeText}" Foreground="#DCEEFF" FontSize="12"/>
+                                                    <ProgressBar Minimum="0" Maximum="100" Value="{Binding Progress}"/>
+                                                    <TextBlock Text="{Binding StatusText}" Foreground="#DCEEFF" FontSize="12"/>
+                                                </StackPanel>
+                                            </Border>
+                                            <Border Classes="fileCard" IsVisible="{Binding IsFile}">
+                                                <StackPanel Spacing="6">
+                                                    <TextBlock Text="{Binding FileName}" FontWeight="SemiBold"/>
+                                                    <TextBlock Text="{Binding FileSizeText}" Classes="caption"/>
+                                                    <ProgressBar Minimum="0" Maximum="100" Value="{Binding Progress}"/>
+                                                    <TextBlock Text="{Binding StatusText}" Classes="caption"/>
+                                                </StackPanel>
+                                            </Border>
+                                            <Grid ColumnDefinitions="*,Auto" ColumnSpacing="8">
+                                                <TextBlock Text="{Binding ReadStatusText}"
+                                                           Foreground="#DCEEFF"
+                                                           FontSize="12"
+                                                           IsVisible="{Binding HasReadStatus}"
+                                                           VerticalAlignment="Center"/>
+                                                <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="8" HorizontalAlignment="Right">
+                                                    <TextBlock Text="{Binding TimeText}" Foreground="#DCEEFF" FontSize="12" VerticalAlignment="Center"/>
+                                                    <Button Content="撤回"
+                                                            Padding="8,2"
+                                                            FontSize="12"
+                                                            Command="{Binding $parent[Window].DataContext.RecallMessageCommand}"
+                                                            CommandParameter="{Binding}"
+                                                            IsVisible="{Binding CanRecall}"/>
+                                                </StackPanel>
+                                            </Grid>
+                                        </StackPanel>
+                                    </Border>
+                                </StackPanel>
+                            </Grid>
+                        </DataTemplate>
+                    </ListBox.ItemTemplate>
+                </ListBox>
 
                 <Border Grid.Row="3"
                         IsVisible="{Binding IsEmojiPickerOpen}"

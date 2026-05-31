@@ -5,7 +5,6 @@ using Avalonia.Platform;
 using Avalonia.Threading;
 using LanTalk.App.Services;
 using LanTalk.App.ViewModels;
-using LanTalk.Core.Services;
 
 namespace LanTalk.App.Views;
 
@@ -23,7 +22,6 @@ public partial class MainWindow : Window
     {
         InitializeComponent();
         InitializeTrayIcon();
-        _notificationService = new DesktopNotificationService(RestoreFromTray, new ConsoleLanTalkLogger());
         Closing += OnClosing;
         DataContextChanged += OnDataContextChanged;
     }
@@ -57,6 +55,8 @@ public partial class MainWindow : Window
     {
         DetachViewModel();
         _attachedViewModel = viewModel;
+        _notificationService?.Dispose();
+        _notificationService = viewModel is null ? null : new DesktopNotificationService(RestoreFromTray, viewModel.Logger);
 
         _messagesCollection = viewModel?.Messages;
         if (_messagesCollection is null)
@@ -96,7 +96,13 @@ public partial class MainWindow : Window
 
     private void QueueScrollToLatestMessage()
     {
-        Dispatcher.UIThread.Post(MessagesScrollViewer.ScrollToEnd, DispatcherPriority.Loaded);
+        Dispatcher.UIThread.Post(() =>
+        {
+            if (_attachedViewModel?.Messages.Count > 0)
+            {
+                MessagesListBox.ScrollIntoView(_attachedViewModel.Messages[^1]);
+            }
+        }, DispatcherPriority.Loaded);
     }
 
     private void InitializeTrayIcon()
