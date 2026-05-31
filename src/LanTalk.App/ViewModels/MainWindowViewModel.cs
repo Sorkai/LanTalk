@@ -88,6 +88,12 @@ public sealed partial class MainWindowViewModel : ViewModelBase
     private string statusMessage = "正在初始化 LanTalk";
 
     [ObservableProperty]
+    private int totalUnreadCount;
+
+    [ObservableProperty]
+    private string unreadSummary = "没有未读消息";
+
+    [ObservableProperty]
     private bool isFileRequestPaneOpen;
 
     [ObservableProperty]
@@ -104,6 +110,10 @@ public sealed partial class MainWindowViewModel : ViewModelBase
     public ObservableCollection<ChatMessageViewModel> Messages { get; } = [];
 
     public int OnlineCount => OnlineUsers.Count(user => user.Status == UserStatus.Online);
+
+    public string WindowTitle => TotalUnreadCount > 0 ? $"LanTalk ({TotalUnreadCount})" : "LanTalk";
+
+    public event EventHandler<UserNotificationEventArgs>? UserNotificationRequested;
 
     public MainWindowViewModel()
         : this(CreateDefaultServices())
@@ -139,6 +149,12 @@ public sealed partial class MainWindowViewModel : ViewModelBase
         _ = ApplyMessageSearchAsync(value);
     }
 
+    partial void OnTotalUnreadCountChanged(int value)
+    {
+        UnreadSummary = value == 0 ? "没有未读消息" : $"{value} 条未读消息";
+        OnPropertyChanged(nameof(WindowTitle));
+    }
+
     partial void OnSelectedUserChanged(OnlineUserViewModel? value)
     {
         if (value is null)
@@ -151,6 +167,7 @@ public sealed partial class MainWindowViewModel : ViewModelBase
             ? "广播给当前所有在线用户"
             : $"{value.IpAddress} · {value.StatusText}";
         value.UnreadCount = 0;
+        RefreshUnreadState();
         UpsertRecentSession(value, moveToTop: true);
         _ = LoadSessionMessagesAsync(value);
     }
@@ -691,10 +708,16 @@ public sealed partial class MainWindowViewModel : ViewModelBase
         else
         {
             session.UnreadCount++;
+            RefreshUnreadState();
         }
 
         UpsertRecentSession(session, payload.Content, moveToTop: true);
+        RefreshUnreadState();
         StatusMessage = kind == MessageKind.Broadcast ? "收到一条广播消息。" : $"收到来自 {senderName} 的消息。";
+        RequestNotification(
+            kind == MessageKind.Broadcast ? "收到广播消息" : $"收到 {senderName} 的消息",
+            payload.Content,
+            sessionId);
     }
 
     private async Task HandleFileRequestAsync(NetworkPacket packet)
@@ -741,9 +764,11 @@ public sealed partial class MainWindowViewModel : ViewModelBase
         else
         {
             senderSession.UnreadCount++;
+            RefreshUnreadState();
         }
 
         UpsertRecentSession(senderSession, $"收到文件：{request.FileName}", moveToTop: true);
+        RefreshUnreadState();
         _incomingFileMessages[request.FileId] = fileMessage;
         _incomingSavePaths[request.FileId] = savePath;
         PendingFileRequest = new FileReceiveRequestViewModel
@@ -756,6 +781,7 @@ public sealed partial class MainWindowViewModel : ViewModelBase
         };
         IsFileRequestPaneOpen = true;
         StatusMessage = $"收到 {sender} 的文件请求：{request.FileName}";
+        RequestNotification("收到文件请求", $"{sender} 想发送：{request.FileName}", request.SenderId);
     }
 
     private async Task HandleFileResponseAsync(NetworkPacket packet)
@@ -1041,6 +1067,16 @@ public sealed partial class MainWindowViewModel : ViewModelBase
     private bool IsMessageSearchActive()
     {
         return !string.IsNullOrWhiteSpace(MessageSearchText);
+    }
+
+    private void RefreshUnreadState()
+    {
+        TotalUnreadCount = RecentSessions.Sum(session => session.UnreadCount);
+    }
+
+    private void RequestNotification(string title, string message, string sessionId)
+    {
+        UserNotificationRequested?.Invoke(this, new UserNotificationEventArgs(title, message, sessionId));
     }
 
     private static void ReplaceCollection(

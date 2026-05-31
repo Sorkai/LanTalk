@@ -1,0 +1,47 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:vm="using:LanTalk.App.Views"
+        x:Class="LanTalk.App.Views.ToastNotificationWindow"
+        x:DataType="vm:ToastNotificationViewModel"
+        Width="360"
+        Height="118"
+        CanResize="False"
+        ShowInTaskbar="False"
+        WindowDecorations="None"
+        Topmost="True"
+        Background="Transparent">
+    <Border Background="{StaticResource LanTalkSurfaceBrush}"
+            BorderBrush="{StaticResource LanTalkBorderBrush}"
+            BorderThickness="1"
+            CornerRadius="8"
+            Padding="14">
+        <Grid ColumnDefinitions="40,*" ColumnSpacing="12">
+            <Border Width="40"
+                    Height="40"
+                    CornerRadius="20"
+                    Background="{StaticResource LanTalkBlueBrush}"
+                    VerticalAlignment="Top">
+                <TextBlock Text="L"
+                           Foreground="White"
+                           FontSize="16"
+                           FontWeight="SemiBold"
+                           HorizontalAlignment="Center"
+                           VerticalAlignment="Center"/>
+            </Border>
+
+            <StackPanel Grid.Column="1" Spacing="6">
+                <TextBlock Text="{Binding Title}"
+                           FontWeight="SemiBold"
+                           TextTrimming="CharacterEllipsis"/>
+                <TextBlock Text="{Binding Message}"
+                           Classes="caption"
+                           MaxHeight="48"
+                           TextWrapping="Wrap"
+                           TextTrimming="CharacterEllipsis"/>
+                <TextBlock Text="点击打开 LanTalk"
+                           Foreground="{StaticResource LanTalkBlueBrush}"
+                           FontSize="12"/>
+            </StackPanel>
+        </Grid>
+    </Border>
+</Window>

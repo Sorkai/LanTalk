@@ -267,6 +267,19 @@
 - UI 在右侧聊天标题下增加“搜索当前聊天记录”输入框；输入关键词后展示当前会话匹配历史，清空后恢复最近消息。
 - 新增测试覆盖会话隔离和 `%` 字符按字面量搜索。
 
+## 2026-05-31 托盘、桌面通知与未读提醒发现
+- 本轮实现继续保持轻量路线，没有新增 NuGet 包。
+- 系统托盘使用 Avalonia 自带 `TrayIcon` 和 `NativeMenu`：
+  - 点击窗口关闭按钮时默认隐藏到托盘，不停止 UDP/TCP/File 服务。
+  - 托盘图标点击或菜单“打开 LanTalk”恢复窗口。
+  - 托盘菜单“退出”才执行真实关闭和 `ShutdownAsync`。
+- 桌面通知使用一个自绘 Avalonia 置顶小窗口，不依赖 Windows App SDK 或系统 Toast 注册；优点是轻量、AOT 风险小，限制是不会进入 Windows 通知中心。
+- 未读提醒强化点：
+  - `MainWindowViewModel.TotalUnreadCount` 汇总最近会话未读数量。
+  - 窗口标题显示 `LanTalk (N)`。
+  - 托盘 tooltip 和菜单显示未读总数。
+  - 收到私聊、广播、文件请求时触发通知事件；窗口隐藏、最小化或非活跃时弹出桌面提醒。
+
 ## 资源
 - `C:\pr\LanTalk\AGENTS.md`：主要 Agent / 项目规则。
 - `C:\pr\LanTalk\lan_talk_codex项目说明文档.md`：项目需求、架构、里程碑、验收要求。

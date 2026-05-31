@@ -400,6 +400,24 @@
   - `dotnet build LanTalk.sln -v:minimal`：0 警告，0 错误。
   - `dotnet test LanTalk.sln -v:minimal`：26 个测试全部通过。
 
+### 阶段 15：系统托盘、桌面通知与未读提醒
+- **状态：** 已完成代码实现。
+- 本轮目标：
+  - 实现系统托盘，避免用户关闭窗口后直接退出应用。
+  - 实现桌面通知，避免窗口不在前台时错过消息。
+  - 强化未读提醒，让窗口标题、托盘和会话列表形成一致反馈。
+- 已执行操作：
+  - 新增 `UserNotificationEventArgs`，由 ViewModel 发出“需要提醒用户”的轻量事件。
+  - `MainWindowViewModel` 新增 `TotalUnreadCount`、`UnreadSummary`、`WindowTitle`，收到非当前会话消息或文件请求时更新未读总数。
+  - 私聊、广播和文件请求到达时触发通知事件；选择会话后清除该会话未读并刷新总数。
+  - `MainWindow` 新增 Avalonia `TrayIcon`，关闭窗口默认隐藏到托盘，托盘支持打开窗口和退出应用。
+  - 新增 `DesktopNotificationService` 和 `ToastNotificationWindow`，窗口隐藏、最小化或非活跃时弹出轻量桌面通知。
+  - README、`docs/test-plan.md`、`task_plan.md`、`findings.md` 已同步更新。
+- 验证结果：
+  - `dotnet build LanTalk.sln -v:minimal`：0 警告，0 错误。
+  - `dotnet test LanTalk.sln -v:minimal`：26 个测试全部通过。
+  - Debug 启动冒烟：使用带日志的 `dotnet run --project src/LanTalk.App/LanTalk.App.csproj` 启动 15 秒，stdout/stderr 均为空，未观察到运行期异常输出。
+
 ### 内网通功能差距检查
 - **状态：** 已完成评估。
 - 本轮目标：

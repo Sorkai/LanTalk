@@ -9,7 +9,7 @@
         x:Class="LanTalk.App.Views.MainWindow"
         x:DataType="vm:MainWindowViewModel"
         Icon="/Assets/avalonia-logo.ico"
-        Title="LanTalk"
+        Title="{Binding WindowTitle}"
         MinWidth="1040"
         MinHeight="680"
         Width="1180"
