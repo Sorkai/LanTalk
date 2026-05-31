@@ -683,3 +683,46 @@
   - `dotnet build LanTalk.sln -v:minimal`：0 警告，0 错误。
   - `dotnet test LanTalk.sln -v:minimal`：67 项全部通过。
   - 桌面冒烟启动：`dotnet run --project src/LanTalk.App/LanTalk.App.csproj --no-build` 隐藏运行 12 秒，无 `stderr` 输出。
+
+### 阶段 25：附件加密、导出与压缩管道
+- **状态：** 已完成并通过自动化验证。
+- 本轮目标：
+  - 为附件传输补齐可兼容旧端的保护元数据、流式加密和压缩开关。
+  - 增加聊天记录与文件传输记录导出入口。
+- 已执行操作：
+  - `LanTalk.Core` 新增 `FileTransferProtection`、`EncryptedFileTransferMetadata`、压缩算法常量与 `Noop` / `GZip` 压缩器工厂。
+  - `DiscoveryPayload` / `UserInfo` 新增 `SupportsProtectedAttachments`，在线能力通过 UDP 发现同步。
+  - `ProtectedFileTransfer` 实现附件元数据加解密和 AES-GCM 分块流加解密；`TcpFileClient` / `FileTransferService` 支持可选发送参数。
+  - `MainWindowViewModel` 已将私聊 / 群组附件、批量文件、离线补发和接收落盘链路接入压缩、受保护附件和导出命令。
+  - 主窗口新增“导出聊天”“导出传输”按钮；设置中新增“发送附件前尝试 GZip 压缩”。
+  - 仓储新增聊天导出查询和文件传输导出查询接口。
+  - 自动化测试新增：受保护附件元数据序列化、GZip 回环、AES-GCM 附件流回环、导出查询和扩展设置持久化。
+- 验证结果：
+  - `dotnet build LanTalk.sln -v:minimal`：通过。
+  - `dotnet test LanTalk.sln -v:minimal`：74 项全部通过。
+- 提交：
+  - `a7ddaa1 feat: add protected attachment transfer tools`
+
+### 阶段 26：通知抽象与开机自启
+- **状态：** 已完成并通过本机验证。
+- 已执行操作：
+  - 新增 `IDesktopNotificationService`，把桌面通知从窗口实现中抽象出来。
+  - `DesktopNotificationService` 新增“优先尝试系统通知，不可用时回退应用内 toast”的配置入口。
+  - 新增 `IStartupRegistrationService` / `WindowsStartupRegistrationService`，通过当前用户 `Run` 注册表项控制开机自启。
+  - 设置面板新增“优先尝试系统通知”“Windows 开机自启”并接入设置保存。
+- 验证结果：
+  - `dotnet build LanTalk.sln -v:minimal`：通过。
+  - `dotnet test LanTalk.sln -v:minimal`：74 项全部通过。
+  - 发布构建中未新增新的 trim / AOT 告警；Windows 专属能力保留平台判断。
+
+### 阶段 22 / 27：文档收口与最终验证
+- **状态：** 进行中。
+- 已执行操作：
+  - 更新 `README.md`，补齐“已完成 / 待人工验收 / 暂未实现”能力清单、已知限制与导出/附件保护/开机自启说明。
+  - 更新 `docs/test-plan.md`，拆分为自动化闭环、发布验证和待人工验收三部分。
+  - 新增 `docs/release.md`，记录串行验证要求、Release / Native AOT 命令、输出目录和已知 DataGrid 警告。
+  - 串行执行 `dotnet publish src/LanTalk.App/LanTalk.App.csproj -c Release -r win-x64 --self-contained false -v:minimal`，发布成功。
+  - 串行执行 `dotnet publish src/LanTalk.App/LanTalk.App.csproj -c Release -r win-x64 -p:PublishAot=true -v:minimal`，发布成功；保留 `IL2104` / `IL3053` 既有警告。
+  - Debug 桌面冒烟：`dotnet run --project src/LanTalk.App/LanTalk.App.csproj --no-build` 隐藏运行 12 秒，`stderr` 为空。
+- 验证插曲：
+  - 并行执行两个 `dotnet publish` 会在 Windows 上触发 `MSB3713` 文件锁；已确认后续发布必须串行执行。

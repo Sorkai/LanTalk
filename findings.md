@@ -389,6 +389,13 @@
   - README / `docs/test-plan.md` 仍保留旧阶段口径，未按“已完成 / 进行中 / 暂未实现”和“待人工验收项”重新收口。
 - Windows 本机验证时，`dotnet build` 和 `dotnet test` 不能并行运行：并行执行会因为 `VBCSCompiler` 占用 `LanTalk.Core.dll` 触发 `CS2012` 文件锁错误；后续应统一采用串行验证。
 
+## 2026-06-01 附件保护、导出与平台增强实现发现
+- 受保护附件不需要推翻既有文件协议：在 `FileTransferRequest` 上追加 `Protection` 和加密元数据后，旧端仍能走普通附件路径，新端则可在已有一对一 E2EE 会话基础上启用附件元数据加密和 AES-GCM 文件流保护。
+- 附件压缩最稳妥的落点是 ViewModel 发送前预处理和接收后解压，不把 `TcpFileServer` / `TcpFileClient` 改造成复杂的多层流状态机；因此当前实现默认关闭压缩，开启后使用临时文件和 GZip 回环。
+- 聊天记录与文件传输记录导出无需新增复杂 DTO：仓储层直接提供按时间窗口导出查询，UI 层按 CSV / JSON 异步写文件即可，足以满足当前课堂 / 演示交付。
+- Windows 开机自启采用当前用户 `Run` 注册表项是当前仓库里最轻量、最不破坏 AOT 结构的实现；系统通知则先抽象接口并保留应用内 toast 回退，避免为单一平台引入重型依赖。
+- 发布验证再次证明：Windows 上 `build` / `test` / `publish` 都应串行执行，尤其两个 `publish` 并行时会触发 `MSB3713` 文件锁。
+
 ## 资源
 - `C:\pr\LanTalk\AGENTS.md`：主要 Agent / 项目规则。
 - `C:\pr\LanTalk\lan_talk_codex项目说明文档.md`：项目需求、架构、里程碑、验收要求。
