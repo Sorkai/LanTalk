@@ -110,6 +110,59 @@ public sealed class MessageServiceTests
     }
 
     [Fact]
+    public async Task MessageService_ShouldSendGroupFileRequestOverTcp()
+    {
+        var logger = new ConsoleLanTalkLogger();
+        var service = new MessageService(new TcpMessageClient(), new TcpMessageServer(logger), logger);
+        var received = new TaskCompletionSource<NetworkPacket>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var port = Random.Shared.Next(56000, 59000);
+
+        service.PacketReceived += (_, packet) => received.TrySetResult(packet);
+        await service.StartAsync(port);
+
+        var local = new AppSettings { UserId = "user-a" };
+        var receiver = new UserInfo
+        {
+            UserId = "user-b",
+            Nickname = "接收方",
+            IpAddress = "127.0.0.1",
+            MessagePort = port,
+            FilePort = port + 1,
+            Status = UserStatus.Online,
+            LastSeenTime = DateTimeOffset.Now
+        };
+        var request = new FileTransferRequest(
+            "file-a",
+            "photo.png",
+            1024,
+            "user-a",
+            "user-b",
+            50002,
+            true,
+            "group-a",
+            "项目组",
+            GroupKind.Permanent,
+            ["user-a", "user-b"],
+            "message-a");
+
+        await service.SendFileRequestAsync(local, receiver, request);
+        var completed = await Task.WhenAny(received.Task, Task.Delay(TimeSpan.FromSeconds(3)));
+
+        await service.StopAsync();
+        await service.DisposeAsync();
+
+        Assert.Same(received.Task, completed);
+        var packet = await received.Task;
+        Assert.Equal(PacketType.FileRequest, packet.Type);
+
+        var restored = System.Text.Json.JsonSerializer.Deserialize(packet.PayloadJson, LanTalk.Core.Serialization.LanTalkJsonContext.Default.FileTransferRequest);
+        Assert.NotNull(restored);
+        Assert.True(restored.IsGroupTransfer);
+        Assert.Equal("group-a", restored.GroupId);
+        Assert.Equal("message-a", restored.GroupMessageId);
+    }
+
+    [Fact]
     public void EndToEndEncryptionManager_ShouldEncryptAndDecryptPayload()
     {
         using var sender = new EndToEndEncryptionManager();

@@ -50,7 +50,9 @@
 - 临时群组只保留在当前运行时会话列表。
 - 永久群组保存到本地 SQLite `ChatGroups` 表，重启后恢复；接收方收到永久群组消息后也会保存该群组。
 - 群组聊天记录继续写入 `ChatMessages`，其中 `SessionId` 和 `ReceiverId` 使用 `GroupId`。
-- 当前群组仅支持文本消息；群组图片/文件、群组加密和离线补发后续扩展。
+- 群组图片/文件复用 `FileRequest`、`FileAccept`、`FileReject`、`FileFinished` 和 TCP 文件端口；发送方为每个在线成员生成独立 `FileId`，接收方仍按单文件确认和流式接收。
+- 群组文件请求会在 `FileTransferRequest` 中追加可选元数据：`GroupId`、`GroupName`、`GroupKind`、`GroupMemberUserIds`、`GroupMessageId`。旧客户端缺少这些字段时会继续按普通文件请求处理。
+- 群组加密和离线补发后续扩展。
 
 ## 文件传输
 - 文件请求通过 TCP 消息端口发送 `FileTransferRequest`。

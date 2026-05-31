@@ -521,3 +521,22 @@
 - 验证结果：
   - `dotnet build LanTalk.sln -v:minimal`：0 警告，0 错误。
   - `dotnet test LanTalk.sln -v:minimal`：43 个测试全部通过。
+
+### 阶段 19：群组高级功能
+- **状态：** 进行中。
+- 阶段规划：
+  - 第一阶段实现群组图片/文件，复用现有 TCP 文件传输通道，每个在线成员独立 `FileId`，群组会话聚合展示投递状态。
+  - 第二阶段实现离线成员补发，新增持久化待投递队列、上线重试和去重。
+  - 第三阶段实现群组端到端加密，先评估逐成员加密，再扩展为群密钥 epoch 轮换。
+- 当前执行：
+  - 已确认当前群组文本消息、私聊图片/文件、私聊加密和 HKDF 基础均可复用。
+  - 先修改 `FileTransferRequest` 和 `MainWindowViewModel`，不改变底层 TCP 文件流协议。
+- 已完成：
+  - `FileTransferRequest` 追加可选群组元数据，并保持旧文件请求兼容。
+  - 群组会话允许发送图片/文件，发送方按在线成员逐个创建 `FileId` 和文件请求。
+  - 发送方用 `GroupFileTransferState` 聚合显示群发请求、接收、拒绝、失败和完成状态。
+  - 接收方收到群组附件请求时自动恢复群组会话，永久群组继续持久化。
+  - 群组图片可写入群组聊天历史，继续复用现有图片预览逻辑。
+- 验证结果：
+  - `dotnet build LanTalk.sln -v:minimal`：0 警告，0 错误。
+  - `dotnet test LanTalk.sln -v:minimal`：45 个测试全部通过。

@@ -89,6 +89,38 @@ public sealed class SerializationTests
 
         Assert.NotNull(restored);
         Assert.False(restored.IsImage);
+        Assert.False(restored.IsGroupTransfer);
+        Assert.Null(restored.GroupId);
+    }
+
+    [Fact]
+    public void FileTransferRequest_ShouldRoundTripGroupMetadata()
+    {
+        var request = new FileTransferRequest(
+            "file-a",
+            "photo.png",
+            1024,
+            "user-a",
+            "user-b",
+            50002,
+            true,
+            "group-a",
+            "项目组",
+            GroupKind.Permanent,
+            ["user-a", "user-b", "user-c"],
+            "message-a");
+
+        var json = JsonSerializer.Serialize(request, LanTalkJsonContext.Default.FileTransferRequest);
+        var restored = JsonSerializer.Deserialize(json, LanTalkJsonContext.Default.FileTransferRequest);
+
+        Assert.NotNull(restored);
+        Assert.True(restored.IsImage);
+        Assert.True(restored.IsGroupTransfer);
+        Assert.Equal("group-a", restored.GroupId);
+        Assert.Equal("项目组", restored.GroupName);
+        Assert.Equal(GroupKind.Permanent, restored.GroupKind);
+        Assert.Contains("user-c", restored.GroupMemberUserIds ?? []);
+        Assert.Equal("message-a", restored.GroupMessageId);
     }
 
     [Fact]

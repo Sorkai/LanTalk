@@ -51,7 +51,7 @@ public sealed partial class ChatMessageViewModel : ViewModelBase
 
     public bool IsImage => Kind == MessageKind.Image;
 
-    public bool IsText => Kind is MessageKind.Private or MessageKind.Broadcast or MessageKind.System;
+    public bool IsText => Kind is MessageKind.Private or MessageKind.Broadcast or MessageKind.Group or MessageKind.System;
 
     public bool HasContentText => !string.IsNullOrWhiteSpace(Content);
 

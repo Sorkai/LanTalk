@@ -43,6 +43,7 @@ public sealed partial class MainWindowViewModel : ViewModelBase
     private readonly Dictionary<string, string> _outgoingFilePaths = new(StringComparer.Ordinal);
     private readonly Dictionary<string, UserInfo> _outgoingFileReceivers = new(StringComparer.Ordinal);
     private readonly Dictionary<string, ChatMessageViewModel> _outgoingFileMessages = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, GroupFileTransferState> _outgoingGroupFileStates = new(StringComparer.Ordinal);
     private readonly Dictionary<string, ChatMessageViewModel> _incomingFileMessages = new(StringComparer.Ordinal);
     private readonly Dictionary<string, string> _incomingSavePaths = new(StringComparer.Ordinal);
     private readonly HashSet<string> _incomingFinishedNotifications = new(StringComparer.Ordinal);
@@ -846,9 +847,9 @@ public sealed partial class MainWindowViewModel : ViewModelBase
     [RelayCommand]
     private async Task AttachFileAsync()
     {
-        if (SelectedUser is null || SelectedUser.UserId == NetworkConstants.BroadcastSessionId || SelectedUser.IsGroupSession)
+        if (SelectedUser is null || SelectedUser.UserId == NetworkConstants.BroadcastSessionId)
         {
-            StatusMessage = "请先选择一个在线用户再发送文件；群组文件发送会在后续支持。";
+            StatusMessage = "请先选择一个用户或群组再发送文件。";
             return;
         }
 
@@ -864,9 +865,9 @@ public sealed partial class MainWindowViewModel : ViewModelBase
     [RelayCommand]
     private async Task AttachImageAsync()
     {
-        if (SelectedUser is null || SelectedUser.UserId == NetworkConstants.BroadcastSessionId || SelectedUser.IsGroupSession)
+        if (SelectedUser is null || SelectedUser.UserId == NetworkConstants.BroadcastSessionId)
         {
-            StatusMessage = "请先选择一个在线用户再发送图片；群组图片发送会在后续支持。";
+            StatusMessage = "请先选择一个用户或群组再发送图片。";
             return;
         }
 
@@ -896,6 +897,12 @@ public sealed partial class MainWindowViewModel : ViewModelBase
         if (!fileInfo.Exists)
         {
             StatusMessage = "文件不存在。";
+            return;
+        }
+
+        if (SelectedUser.IsGroupSession)
+        {
+            await SendSelectedGroupFileAsync(SelectedUser, selectedPath, fileInfo, isImage);
             return;
         }
 
@@ -965,6 +972,121 @@ public sealed partial class MainWindowViewModel : ViewModelBase
             fileMessage.StatusText = "发送请求失败";
             StatusMessage = isImage ? $"图片请求发送失败：{ex.Message}" : $"文件请求发送失败：{ex.Message}";
         }
+    }
+
+    private async Task SendSelectedGroupFileAsync(OnlineUserViewModel group, string selectedPath, FileInfo fileInfo, bool isImage)
+    {
+        var receivers = ResolveGroupReceivers(group)
+            .Where(user => user.Status == UserStatus.Online)
+            .ToArray();
+        if (receivers.Length == 0)
+        {
+            StatusMessage = $"群组“{group.Nickname}”暂无在线成员可接收{(isImage ? "图片" : "文件")}。";
+            return;
+        }
+
+        var groupMessageId = Guid.NewGuid().ToString("N");
+        var memberIds = group.GroupMemberIds
+            .Append(_settings.UserId)
+            .Distinct(StringComparer.Ordinal)
+            .ToArray();
+        var fileMessage = new ChatMessageViewModel
+        {
+            SenderName = LocalNickname,
+            Content = isImage ? string.Empty : $"群组文件：{fileInfo.Name}",
+            TimeText = DateTimeOffset.Now.ToString("HH:mm"),
+            IsMine = true,
+            Kind = isImage ? MessageKind.Image : MessageKind.File,
+            FileName = fileInfo.Name,
+            FileSizeText = FormatFileSize(fileInfo.Length),
+            Progress = 0,
+            StatusText = $"准备群发给 {receivers.Length} 个在线成员"
+        };
+
+        if (isImage)
+        {
+            fileMessage.SetImagePath(selectedPath);
+        }
+
+        if (_settings.SaveChatHistory && isImage)
+        {
+            await _chatHistoryService.SaveMessageAsync(CreateImageChatMessage(
+                groupMessageId,
+                group.UserId,
+                fileInfo,
+                selectedPath,
+                isMine: true,
+                sessionId: group.UserId,
+                receiverId: group.UserId));
+        }
+
+        if (IsMessageSearchActive() && isImage)
+        {
+            await SearchSessionMessagesAsync(group, MessageSearchText);
+        }
+        else
+        {
+            Messages.Add(fileMessage);
+        }
+
+        var state = new GroupFileTransferState(fileMessage, receivers.Length);
+        UpsertRecentSession(group, isImage ? $"[群组图片] {fileInfo.Name}" : $"[群组文件] {fileInfo.Name}", moveToTop: true);
+
+        var success = 0;
+        var failure = 0;
+        foreach (var receiver in receivers)
+        {
+            var fileId = Guid.NewGuid().ToString("N");
+            var request = new FileTransferRequest(
+                fileId,
+                fileInfo.Name,
+                fileInfo.Length,
+                _settings.UserId,
+                receiver.UserId,
+                _settings.FilePort,
+                isImage,
+                group.UserId,
+                group.Nickname,
+                group.GroupKind,
+                memberIds,
+                groupMessageId);
+
+            _outgoingFilePaths[fileId] = selectedPath;
+            _outgoingFileReceivers[fileId] = receiver;
+            _outgoingFileMessages[fileId] = fileMessage;
+            _outgoingGroupFileStates[fileId] = state;
+
+            await _fileTransferRepository.SaveAsync(new FileTransferRecord
+            {
+                FileId = fileId,
+                SenderId = _settings.UserId,
+                ReceiverId = receiver.UserId,
+                FileName = fileInfo.Name,
+                FileSize = fileInfo.Length,
+                SavePath = selectedPath,
+                Status = FileTransferStatus.Pending,
+                TransferTime = DateTimeOffset.Now
+            });
+
+            try
+            {
+                await _messageService.SendFileRequestAsync(_settings, receiver, request);
+                state.MarkRequestSent(fileId);
+                success++;
+            }
+            catch (Exception ex)
+            {
+                failure++;
+                state.MarkFailed(fileId);
+                _logger.Warning($"群组{(isImage ? "图片" : "文件")}请求发送给 {receiver.Nickname}({receiver.IpAddress}) 失败：{ex.Message}");
+                await SaveOutgoingFileStatusAsync(fileId, FileTransferStatus.Failed);
+            }
+        }
+
+        state.Apply();
+        StatusMessage = failure == 0
+            ? $"群组{(isImage ? "图片" : "文件")}请求已发送给 {success} 个在线成员。"
+            : $"群组{(isImage ? "图片" : "文件")}请求已发送 {success} 人，失败 {failure} 人。";
     }
 
     private static string? ValidatePorts(SettingsViewModel settings)
@@ -1306,7 +1428,35 @@ public sealed partial class MainWindowViewModel : ViewModelBase
         var isImage = request.IsImage || IsImageFileName(request.FileName);
         _pendingFileRequests[request.FileId] = request;
         var sender = ResolveUserName(packet.FromUserId);
-        var senderSession = EnsureUserSession(packet.FromUserId, sender, "0.0.0.0");
+        var session = request.IsGroupTransfer
+            ? EnsureGroupSession(new ChatGroup
+            {
+                GroupId = request.GroupId!,
+                Name = string.IsNullOrWhiteSpace(request.GroupName) ? "未命名群组" : request.GroupName,
+                Kind = request.GroupKind,
+                MemberUserIds = (request.GroupMemberUserIds ?? [])
+                    .Append(_settings.UserId)
+                    .Append(request.SenderId)
+                    .Where(id => !string.IsNullOrWhiteSpace(id))
+                    .Distinct(StringComparer.Ordinal)
+                    .ToArray(),
+                CreatedTime = DateTimeOffset.Now,
+                UpdatedTime = DateTimeOffset.Now
+            })
+            : EnsureUserSession(packet.FromUserId, sender, "0.0.0.0");
+        if (request.IsGroupTransfer && request.GroupKind == GroupKind.Permanent)
+        {
+            await _groupRepository.SaveAsync(new ChatGroup
+            {
+                GroupId = request.GroupId!,
+                Name = string.IsNullOrWhiteSpace(request.GroupName) ? "未命名群组" : request.GroupName,
+                Kind = request.GroupKind,
+                MemberUserIds = session.GroupMemberIds.ToArray(),
+                CreatedTime = DateTimeOffset.Now,
+                UpdatedTime = DateTimeOffset.Now
+            });
+        }
+
         var savePath = Path.Combine(_settings.FileSavePath, request.FileName);
 
         await _fileTransferRepository.SaveAsync(new FileTransferRecord
@@ -1329,6 +1479,9 @@ public sealed partial class MainWindowViewModel : ViewModelBase
                 new FileInfo(savePath),
                 savePath,
                 isMine: false,
+                sessionId: request.GroupId ?? request.SenderId,
+                senderId: request.SenderId,
+                receiverId: request.GroupId ?? _settings.UserId,
                 fileName: request.FileName,
                 fileSize: request.FileSize));
         }
@@ -1336,7 +1489,7 @@ public sealed partial class MainWindowViewModel : ViewModelBase
         var fileMessage = new ChatMessageViewModel
         {
             SenderName = sender,
-            Content = isImage ? string.Empty : "收到文件发送请求，请确认是否接收。",
+            Content = isImage ? string.Empty : request.IsGroupTransfer ? $"群组文件：{request.FileName}" : "收到文件发送请求，请确认是否接收。",
             TimeText = DateTimeOffset.Now.ToString("HH:mm"),
             Kind = isImage ? MessageKind.Image : MessageKind.File,
             FileName = request.FileName,
@@ -1350,17 +1503,17 @@ public sealed partial class MainWindowViewModel : ViewModelBase
             fileMessage.SetImagePath(savePath);
         }
 
-        if (SelectedUser?.UserId == request.SenderId)
+        if (SelectedUser?.UserId == session.UserId)
         {
             Messages.Add(fileMessage);
         }
         else
         {
-            senderSession.UnreadCount++;
+            session.UnreadCount++;
             RefreshUnreadState();
         }
 
-        UpsertRecentSession(senderSession, isImage ? $"[图片] {request.FileName}" : $"收到文件：{request.FileName}", moveToTop: true);
+        UpsertRecentSession(session, isImage ? $"[图片] {request.FileName}" : $"收到文件：{request.FileName}", moveToTop: true);
         RefreshUnreadState();
         _incomingFileMessages[request.FileId] = fileMessage;
         _incomingSavePaths[request.FileId] = savePath;
@@ -1371,16 +1524,20 @@ public sealed partial class MainWindowViewModel : ViewModelBase
             SenderName = sender,
             FileName = request.FileName,
             FileSizeText = FormatFileSize(request.FileSize),
-            IsImage = isImage
+            IsImage = isImage,
+            GroupId = request.GroupId ?? string.Empty,
+            GroupName = request.GroupName ?? string.Empty
         };
         IsFileRequestPaneOpen = true;
         StatusMessage = isImage
-            ? $"收到 {sender} 的图片：{request.FileName}"
-            : $"收到 {sender} 的文件请求：{request.FileName}";
+            ? request.IsGroupTransfer ? $"群组“{session.Nickname}”收到 {sender} 的图片：{request.FileName}" : $"收到 {sender} 的图片：{request.FileName}"
+            : request.IsGroupTransfer ? $"群组“{session.Nickname}”收到 {sender} 的文件请求：{request.FileName}" : $"收到 {sender} 的文件请求：{request.FileName}";
         RequestNotification(
             isImage ? "收到图片" : "收到文件请求",
-            isImage ? $"{sender} 发来图片：{request.FileName}" : $"{sender} 想发送：{request.FileName}",
-            request.SenderId);
+            request.IsGroupTransfer
+                ? $"{sender} 在群组“{session.Nickname}”发来{(isImage ? "图片" : "文件")}：{request.FileName}"
+                : isImage ? $"{sender} 发来图片：{request.FileName}" : $"{sender} 想发送：{request.FileName}",
+            session.UserId);
     }
 
     private async Task HandleFileResponseAsync(NetworkPacket packet)
@@ -1401,6 +1558,13 @@ public sealed partial class MainWindowViewModel : ViewModelBase
             fileMessage.StatusText = response.Reason ?? "接收方已拒绝";
             fileMessage.Progress = 0;
             StatusMessage = $"文件被拒绝：{fileMessage.FileName}";
+            if (_outgoingGroupFileStates.TryGetValue(response.FileId, out var rejectedGroupState))
+            {
+                rejectedGroupState.MarkRejected(response.FileId);
+                rejectedGroupState.Apply();
+                StatusMessage = $"群组附件被一名成员拒绝：{fileMessage.FileName}";
+            }
+
             await SaveOutgoingFileStatusAsync(response.FileId, FileTransferStatus.Rejected);
             return;
         }
@@ -1409,25 +1573,48 @@ public sealed partial class MainWindowViewModel : ViewModelBase
             !_outgoingFileReceivers.TryGetValue(response.FileId, out var receiver))
         {
             fileMessage.StatusText = "文件路径丢失";
+            if (_outgoingGroupFileStates.TryGetValue(response.FileId, out var missingPathGroupState))
+            {
+                missingPathGroupState.MarkFailed(response.FileId);
+                missingPathGroupState.Apply();
+            }
+
             await SaveOutgoingFileStatusAsync(response.FileId, FileTransferStatus.Failed);
             return;
         }
 
-        fileMessage.StatusText = "正在传输";
+        var groupState = _outgoingGroupFileStates.GetValueOrDefault(response.FileId);
+        groupState?.MarkAccepted(response.FileId);
+        fileMessage.StatusText = groupState is null ? "正在传输" : groupState.BuildStatus();
         await SaveOutgoingFileStatusAsync(response.FileId, FileTransferStatus.Transferring);
 
         try
         {
             var progress = new Progress<double>(value =>
             {
-                fileMessage.Progress = value;
-                fileMessage.StatusText = $"正在传输 {value:0}%";
+                if (groupState is null)
+                {
+                    fileMessage.Progress = value;
+                    fileMessage.StatusText = $"正在传输 {value:0}%";
+                    return;
+                }
+
+                fileMessage.StatusText = groupState.BuildStatus(value);
             });
 
             await _fileTransferService.SendFileAsync(receiver.IpAddress, receiver.FilePort, response.FileId, path, progress);
-            fileMessage.Progress = 100;
-            fileMessage.StatusText = "已发送，等待对方确认";
-            StatusMessage = $"文件已发送，等待对方确认：{fileMessage.FileName}";
+            if (groupState is null)
+            {
+                fileMessage.Progress = 100;
+                fileMessage.StatusText = "已发送，等待对方确认";
+                StatusMessage = $"文件已发送，等待对方确认：{fileMessage.FileName}";
+            }
+            else
+            {
+                groupState.Apply();
+                StatusMessage = $"群组附件已发送给一名成员，等待接收确认：{fileMessage.FileName}";
+            }
+
             await SaveOutgoingFileStatusAsync(response.FileId, FileTransferStatus.Transferring);
         }
         catch (Exception ex)
@@ -1435,6 +1622,13 @@ public sealed partial class MainWindowViewModel : ViewModelBase
             _logger.Error("文件传输失败。", ex);
             fileMessage.StatusText = "传输失败";
             StatusMessage = $"文件传输失败：{ex.Message}";
+            if (groupState is not null)
+            {
+                groupState.MarkFailed(response.FileId);
+                groupState.Apply();
+                StatusMessage = $"群组附件传输失败：{ex.Message}";
+            }
+
             await SaveOutgoingFileStatusAsync(response.FileId, FileTransferStatus.Failed);
 
             try
@@ -1461,10 +1655,20 @@ public sealed partial class MainWindowViewModel : ViewModelBase
 
         if (_outgoingFileMessages.TryGetValue(finished.FileId, out var outgoingMessage))
         {
-            outgoingMessage.Progress = 100;
-            outgoingMessage.StatusText = "对方已接收";
+            if (_outgoingGroupFileStates.TryGetValue(finished.FileId, out var groupState))
+            {
+                groupState.MarkCompleted(finished.FileId);
+                groupState.Apply();
+                StatusMessage = $"群组附件已有成员确认接收：{outgoingMessage.FileName}";
+            }
+            else
+            {
+                outgoingMessage.Progress = 100;
+                outgoingMessage.StatusText = "对方已接收";
+                StatusMessage = $"对方已确认接收文件：{outgoingMessage.FileName}";
+            }
+
             await SaveOutgoingFileStatusAsync(finished.FileId, FileTransferStatus.Completed);
-            StatusMessage = $"对方已确认接收文件：{outgoingMessage.FileName}";
             return;
         }
 
@@ -1490,6 +1694,12 @@ public sealed partial class MainWindowViewModel : ViewModelBase
             if (_outgoingFileMessages.TryGetValue(error.FileId, out var outgoingMessage))
             {
                 outgoingMessage.StatusText = "传输失败";
+                if (_outgoingGroupFileStates.TryGetValue(error.FileId, out var groupState))
+                {
+                    groupState.MarkFailed(error.FileId);
+                    groupState.Apply();
+                }
+
                 await SaveOutgoingFileStatusAsync(error.FileId, FileTransferStatus.Failed);
             }
 
@@ -2306,15 +2516,18 @@ public sealed partial class MainWindowViewModel : ViewModelBase
         FileInfo fileInfo,
         string localPath,
         bool isMine,
+        string? sessionId = null,
+        string? senderId = null,
+        string? receiverId = null,
         string? fileName = null,
         long? fileSize = null)
     {
         return new ChatMessage
         {
             MessageId = fileId,
-            SessionId = peerUserId,
-            SenderId = isMine ? _settings.UserId : peerUserId,
-            ReceiverId = isMine ? peerUserId : _settings.UserId,
+            SessionId = sessionId ?? peerUserId,
+            SenderId = senderId ?? (isMine ? _settings.UserId : peerUserId),
+            ReceiverId = receiverId ?? (isMine ? peerUserId : _settings.UserId),
             Kind = MessageKind.Image,
             Content = SerializeImageMessageContent(new ImageMessageContent(
                 fileId,
@@ -2388,6 +2601,84 @@ public sealed partial class MainWindowViewModel : ViewModelBase
         }
 
         return $"{size:0.##} {units[unitIndex]}";
+    }
+
+    private sealed class GroupFileTransferState
+    {
+        private readonly HashSet<string> requestSentFileIds = new(StringComparer.Ordinal);
+        private readonly HashSet<string> acceptedFileIds = new(StringComparer.Ordinal);
+        private readonly HashSet<string> rejectedFileIds = new(StringComparer.Ordinal);
+        private readonly HashSet<string> completedFileIds = new(StringComparer.Ordinal);
+        private readonly HashSet<string> failedFileIds = new(StringComparer.Ordinal);
+
+        public GroupFileTransferState(ChatMessageViewModel message, int totalCount)
+        {
+            Message = message;
+            TotalCount = totalCount;
+        }
+
+        private ChatMessageViewModel Message { get; }
+
+        private int TotalCount { get; }
+
+        public void MarkRequestSent(string fileId)
+        {
+            requestSentFileIds.Add(fileId);
+        }
+
+        public void MarkAccepted(string fileId)
+        {
+            acceptedFileIds.Add(fileId);
+        }
+
+        public void MarkRejected(string fileId)
+        {
+            rejectedFileIds.Add(fileId);
+        }
+
+        public void MarkCompleted(string fileId)
+        {
+            completedFileIds.Add(fileId);
+            failedFileIds.Remove(fileId);
+        }
+
+        public void MarkFailed(string fileId)
+        {
+            failedFileIds.Add(fileId);
+        }
+
+        public string BuildStatus(double? activeProgress = null)
+        {
+            var completed = completedFileIds.Count;
+            var rejected = rejectedFileIds.Count;
+            var failed = failedFileIds.Count;
+            var sent = requestSentFileIds.Count;
+
+            if (activeProgress is not null)
+            {
+                return $"群发中 {activeProgress:0}% · 完成 {completed}/{TotalCount}，拒绝 {rejected}，失败 {failed}";
+            }
+
+            if (TotalCount > 0 && completed + rejected + failed >= TotalCount)
+            {
+                return failed == 0 && rejected == 0
+                    ? $"群发完成 · {completed}/{TotalCount} 已接收"
+                    : $"群发结束 · 完成 {completed}/{TotalCount}，拒绝 {rejected}，失败 {failed}";
+            }
+
+            if (acceptedFileIds.Count > 0)
+            {
+                return $"群发进行中 · 完成 {completed}/{TotalCount}，已接受 {acceptedFileIds.Count}，拒绝 {rejected}，失败 {failed}";
+            }
+
+            return $"群发请求 {sent}/{TotalCount} · 拒绝 {rejected}，失败 {failed}";
+        }
+
+        public void Apply()
+        {
+            Message.Progress = TotalCount == 0 ? 0 : completedFileIds.Count * 100d / TotalCount;
+            Message.StatusText = BuildStatus();
+        }
     }
 }
 
