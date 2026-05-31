@@ -26,9 +26,22 @@
 - `FileReject`：拒绝接收文件。
 - `FileFinished`：文件传输完成。
 - `Error`：错误消息。
+- `EncryptionHello`：端到端加密协商请求。
+- `EncryptionAck`：端到端加密协商确认。
+- `EncryptionCancel`：关闭端到端加密会话。
 
 ## 包结构
 网络包统一使用 `NetworkPacket`，载荷放入 `PayloadJson`，并使用 `LanTalkJsonContext` 进行 Source Generator 序列化。
+
+`NetworkPacket.IsEncrypted` 用于标记 `PrivateMessage` 的 `PayloadJson` 是否为加密载荷。旧客户端或未启用加密的会话会保持默认 `false`，按明文 `TextMessagePayload` 处理。
+
+## 端到端加密
+- 加密范围：当前实现覆盖一对一私聊文本消息；广播、文件元数据和文件流仍使用原协议。
+- 协商流程：用户在私聊会话中启用开关后，发送方发出 `EncryptionHello`，接收方使用临时 ECDH P-256 密钥派生会话密钥并返回 `EncryptionAck`。
+- 消息加密：协商完成后，`PrivateMessage` 的 `PayloadJson` 改为 `EncryptedMessagePayload`，消息正文使用 AES-256-GCM 加密。
+- 关闭流程：任一方关闭开关时发送 `EncryptionCancel`，双方清除内存中的会话密钥。
+- 密钥存储：会话密钥只保存在运行内存中，不写入 SQLite 或设置文件；应用重启后需要重新协商。
+- 指纹校验：界面会显示加密指纹，演示或真实使用时可由两端人工比对，降低中间人攻击风险。
 
 ## 文件传输
 - 文件请求通过 TCP 消息端口发送 `FileTransferRequest`。

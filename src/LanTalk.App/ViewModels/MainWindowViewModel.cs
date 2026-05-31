@@ -43,6 +43,7 @@ public sealed partial class MainWindowViewModel : ViewModelBase
     private readonly Dictionary<string, string> _incomingSavePaths = new(StringComparer.Ordinal);
     private readonly HashSet<string> _incomingFinishedNotifications = new(StringComparer.Ordinal);
     private CancellationTokenSource? _messageSearchCts;
+    private bool _isUpdatingEncryptionToggle;
     private CancellationTokenSource? _fileServerCts;
     private Task? _fileServerTask;
     private AppSettings _settings = new();
@@ -77,6 +78,18 @@ public sealed partial class MainWindowViewModel : ViewModelBase
 
     [ObservableProperty]
     private string currentSessionSubtitle = "启动后会自动发现同一局域网内的在线用户";
+
+    [ObservableProperty]
+    private bool canToggleConversationEncryption;
+
+    [ObservableProperty]
+    private bool isConversationEncryptionEnabled;
+
+    [ObservableProperty]
+    private string conversationEncryptionStatus = "端到端加密未启用";
+
+    [ObservableProperty]
+    private string conversationEncryptionFingerprint = "选择私聊会话后可启用端到端加密。";
 
     [ObservableProperty]
     private string draftMessage = string.Empty;
@@ -138,6 +151,8 @@ public sealed partial class MainWindowViewModel : ViewModelBase
         _logger = services.Logger;
         _discoveryService.UsersChanged += OnDiscoveryUsersChanged;
         _messageService.PacketReceived += OnMessagePacketReceived;
+        _messageService.EncryptionStateChanged += OnEncryptionStateChanged;
+        _messageService.EncryptionError += OnEncryptionError;
 
         EnsureBroadcastSession();
         RefreshFilteredUsers();
@@ -167,15 +182,144 @@ public sealed partial class MainWindowViewModel : ViewModelBase
             return;
         }
 
-        CurrentSessionTitle = value.Nickname;
-        CurrentSessionSubtitle = value.UserId == NetworkConstants.BroadcastSessionId
-            ? "广播给当前所有在线用户"
-            : $"{value.DepartmentText} · {value.IpAddress} · {value.StatusText}";
+        RefreshConversationEncryptionState();
+        UpdateCurrentSessionHeader();
         value.UnreadCount = 0;
         RefreshSelectionState(value);
         RefreshUnreadState();
         UpsertRecentSession(value, moveToTop: true);
         _ = LoadSessionMessagesAsync(value);
+    }
+
+    partial void OnIsConversationEncryptionEnabledChanged(bool value)
+    {
+        if (_isUpdatingEncryptionToggle)
+        {
+            return;
+        }
+
+        _ = SetConversationEncryptionAsync(value);
+    }
+
+    private async Task SetConversationEncryptionAsync(bool isEnabled)
+    {
+        if (SelectedUser is null || SelectedUser.UserId == NetworkConstants.BroadcastSessionId)
+        {
+            RefreshConversationEncryptionState();
+            return;
+        }
+
+        var receiver = ToUserInfo(SelectedUser);
+
+        try
+        {
+            if (isEnabled)
+            {
+                await _messageService.EnableEncryptionAsync(_settings, receiver);
+                StatusMessage = $"正在与 {SelectedUser.Nickname} 协商端到端加密。";
+            }
+            else
+            {
+                await _messageService.DisableEncryptionAsync(_settings, receiver);
+                StatusMessage = $"已关闭与 {SelectedUser.Nickname} 的端到端加密。";
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.Error(isEnabled ? "启用端到端加密失败。" : "关闭端到端加密失败。", ex);
+            StatusMessage = isEnabled
+                ? $"启用端到端加密失败：{ex.Message}"
+                : $"关闭端到端加密失败：{ex.Message}";
+        }
+        finally
+        {
+            RefreshConversationEncryptionState();
+            UpdateCurrentSessionHeader();
+        }
+    }
+
+    private void OnEncryptionStateChanged(object? sender, ConversationEncryptionStateChangedEventArgs e)
+    {
+        Dispatcher.UIThread.Post(() =>
+        {
+            if (SelectedUser?.UserId == e.State.UserId)
+            {
+                RefreshConversationEncryptionState();
+                UpdateCurrentSessionHeader();
+            }
+
+            StatusMessage = e.State.StatusText;
+        });
+    }
+
+    private void OnEncryptionError(object? sender, EncryptionErrorEventArgs e)
+    {
+        Dispatcher.UIThread.Post(() =>
+        {
+            if (SelectedUser?.UserId == e.PeerUserId)
+            {
+                RefreshConversationEncryptionState();
+                UpdateCurrentSessionHeader();
+            }
+
+            StatusMessage = e.Message;
+        });
+    }
+
+    private void RefreshConversationEncryptionState()
+    {
+        if (SelectedUser is null)
+        {
+            ApplyConversationEncryptionState(false, false, "端到端加密未启用", "选择私聊会话后可启用端到端加密。");
+            return;
+        }
+
+        if (SelectedUser.UserId == NetworkConstants.BroadcastSessionId)
+        {
+            ApplyConversationEncryptionState(false, false, "广播不支持端到端加密", "端到端加密只用于一对一私聊文本。");
+            return;
+        }
+
+        var state = _messageService.GetEncryptionState(SelectedUser.UserId);
+        var tip = string.IsNullOrWhiteSpace(state.Fingerprint)
+            ? "开启后会使用临时 ECDH 密钥协商与 AES-GCM 加密私聊文本。"
+            : $"请与对方比对加密指纹：{state.Fingerprint}";
+        ApplyConversationEncryptionState(true, state.IsEnabled || state.IsPending, state.StatusText, tip);
+    }
+
+    private void ApplyConversationEncryptionState(bool canToggle, bool isChecked, string status, string fingerprintTip)
+    {
+        _isUpdatingEncryptionToggle = true;
+        try
+        {
+            CanToggleConversationEncryption = canToggle;
+            IsConversationEncryptionEnabled = isChecked;
+            ConversationEncryptionStatus = status;
+            ConversationEncryptionFingerprint = fingerprintTip;
+        }
+        finally
+        {
+            _isUpdatingEncryptionToggle = false;
+        }
+    }
+
+    private void UpdateCurrentSessionHeader()
+    {
+        if (SelectedUser is null)
+        {
+            CurrentSessionTitle = "请选择一个会话";
+            CurrentSessionSubtitle = "启动后会自动发现同一局域网内的在线用户";
+            return;
+        }
+
+        CurrentSessionTitle = SelectedUser.Nickname;
+        if (SelectedUser.UserId == NetworkConstants.BroadcastSessionId)
+        {
+            CurrentSessionSubtitle = "广播给当前所有在线用户";
+            return;
+        }
+
+        CurrentSessionSubtitle = $"{SelectedUser.DepartmentText} · {SelectedUser.IpAddress} · {SelectedUser.StatusText} · {ConversationEncryptionStatus}";
     }
 
     [RelayCommand]
@@ -585,7 +729,7 @@ public sealed partial class MainWindowViewModel : ViewModelBase
             await LoadKnownUsersAsync();
             EnsurePortsAvailable(_settings);
             await _discoveryService.StartAsync(_settings);
-            await _messageService.StartAsync(_settings.MessagePort);
+            await _messageService.StartAsync(_settings);
             StartFileServer();
             _logger.Info("程序启动，本机配置与数据库已加载。");
             StatusMessage = "本机设置已加载，UDP 自动发现与 TCP 消息监听已启动。";

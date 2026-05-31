@@ -18,7 +18,7 @@ public sealed class TcpMessageServer
         _logger = logger;
     }
 
-    public async Task StartAsync(int port, Func<NetworkPacket, CancellationToken, Task> onPacket, CancellationToken cancellationToken)
+    public async Task StartAsync(int port, Func<NetworkPacket, IPEndPoint?, CancellationToken, Task> onPacket, CancellationToken cancellationToken)
     {
         var listener = new TcpListener(IPAddress.Any, port);
         listener.Start();
@@ -41,12 +41,13 @@ public sealed class TcpMessageServer
         }
     }
 
-    private async Task HandleClientAsync(TcpClient client, Func<NetworkPacket, CancellationToken, Task> onPacket, CancellationToken cancellationToken)
+    private async Task HandleClientAsync(TcpClient client, Func<NetworkPacket, IPEndPoint?, CancellationToken, Task> onPacket, CancellationToken cancellationToken)
     {
         using (client)
         {
             try
             {
+                var remoteEndPoint = client.Client.RemoteEndPoint as IPEndPoint;
                 await using var stream = client.GetStream();
                 var lengthBuffer = new byte[sizeof(int)];
                 await stream.ReadExactlyAsync(lengthBuffer, cancellationToken).ConfigureAwait(false);
@@ -61,7 +62,7 @@ public sealed class TcpMessageServer
 
                     if (packet is not null)
                     {
-                        await onPacket(packet, cancellationToken).ConfigureAwait(false);
+                        await onPacket(packet, remoteEndPoint, cancellationToken).ConfigureAwait(false);
                     }
                 }
                 finally
@@ -76,4 +77,3 @@ public sealed class TcpMessageServer
         }
     }
 }
-

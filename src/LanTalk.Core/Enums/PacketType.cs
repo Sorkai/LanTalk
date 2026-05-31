@@ -12,6 +12,8 @@ public enum PacketType
     FileAccept,
     FileReject,
     FileFinished,
-    Error
+    Error,
+    EncryptionHello,
+    EncryptionAck,
+    EncryptionCancel
 }
-

@@ -223,6 +223,11 @@
                             <TextBlock Text="{Binding CurrentSessionSubtitle}" Classes="caption"/>
                         </StackPanel>
                         <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="10" VerticalAlignment="Center">
+                            <CheckBox Content="端到端加密"
+                                      IsChecked="{Binding IsConversationEncryptionEnabled}"
+                                      IsEnabled="{Binding CanToggleConversationEncryption}"
+                                      ToolTip.Tip="{Binding ConversationEncryptionFingerprint}"
+                                      VerticalAlignment="Center"/>
                             <Button Content="上一个" Command="{Binding SelectPreviousRecentSessionCommand}" ToolTip.Tip="切换到上一会话"/>
                             <Button Content="下一个" Command="{Binding SelectNextRecentSessionCommand}" ToolTip.Tip="切换到下一会话"/>
                             <Button Content="未读" Command="{Binding SelectNextUnreadSessionCommand}" ToolTip.Tip="切换到未读会话"/>

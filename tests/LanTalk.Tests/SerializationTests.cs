@@ -14,6 +14,7 @@ public sealed class SerializationTests
         {
             Type = PacketType.Hello,
             FromUserId = "user-a",
+            IsEncrypted = true,
             PayloadJson = "{}"
         };
 
@@ -23,6 +24,25 @@ public sealed class SerializationTests
         Assert.NotNull(restored);
         Assert.Equal(PacketType.Hello, restored.Type);
         Assert.Equal("user-a", restored.FromUserId);
+        Assert.True(restored.IsEncrypted);
+    }
+
+    [Fact]
+    public void EncryptedMessagePayload_ShouldRoundTrip()
+    {
+        var payload = new EncryptedMessagePayload(
+            "ECDH-P256-AES-256-GCM",
+            "key-1",
+            Convert.ToBase64String(new byte[] { 1, 2, 3 }),
+            Convert.ToBase64String(new byte[] { 4, 5, 6 }),
+            Convert.ToBase64String(new byte[] { 7, 8, 9 }));
+
+        var json = JsonSerializer.Serialize(payload, LanTalkJsonContext.Default.EncryptedMessagePayload);
+        var restored = JsonSerializer.Deserialize(json, LanTalkJsonContext.Default.EncryptedMessagePayload);
+
+        Assert.NotNull(restored);
+        Assert.Equal("key-1", restored.KeyId);
+        Assert.Equal(payload.CipherText, restored.CipherText);
     }
 
     [Fact]

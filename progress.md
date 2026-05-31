@@ -454,3 +454,19 @@
   - `dotnet build LanTalk.sln -v:minimal`：0 警告，0 错误。
   - `dotnet test LanTalk.sln -v:minimal`：30 个测试全部通过。
   - Debug 启动冒烟：应用运行 12 秒无 stdout/stderr 异常输出，随后主动结束进程。
+
+### 阶段 16：私聊文本端到端加密
+
+- 本轮目标：
+  - 在一对一私聊会话中提供可选端到端加密开关。
+  - 保持广播、文件传输和旧明文私聊路径兼容。
+- 实现内容：
+  - `PacketType` 新增 `EncryptionHello`、`EncryptionAck`、`EncryptionCancel`。
+  - `NetworkPacket` 新增 `IsEncrypted`，旧包默认明文兼容。
+  - `LanTalk.Network` 新增 `EndToEndEncryptionManager`，使用临时 ECDH P-256 协商密钥，使用 AES-256-GCM 加密私聊文本载荷。
+  - `MessageService` 在 Network 层处理加密协商与解密，UI 继续接收原有 `TextMessagePayload`。
+  - 主窗口当前私聊会话新增“端到端加密”开关，并显示协商状态和可人工比对的指纹。
+  - 密钥仅保存在内存中，不写入 SQLite 或设置文件。
+- 当前验证：
+  - `dotnet build LanTalk.sln -v:minimal`：0 警告，0 错误。
+  - `dotnet test LanTalk.sln -v:minimal`：37 个测试全部通过。

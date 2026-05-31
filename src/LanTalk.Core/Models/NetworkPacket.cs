@@ -14,6 +14,7 @@ public sealed class NetworkPacket
 
     public DateTimeOffset Time { get; init; } = DateTimeOffset.Now;
 
+    public bool IsEncrypted { get; init; }
+
     public string PayloadJson { get; init; } = string.Empty;
 }
-
