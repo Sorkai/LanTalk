@@ -8,6 +8,8 @@ public sealed class AppSettings
 
     public string Nickname { get; set; } = string.Empty;
 
+    public string Department { get; set; } = NetworkConstants.DefaultDepartment;
+
     public int UdpPort { get; set; } = NetworkConstants.DefaultUdpPort;
 
     public int MessagePort { get; set; } = NetworkConstants.DefaultMessagePort;

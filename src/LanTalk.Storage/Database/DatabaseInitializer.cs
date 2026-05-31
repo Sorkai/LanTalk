@@ -22,6 +22,27 @@ public sealed class DatabaseInitializer
             command.CommandText = commandText;
             await command.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
         }
+
+        await EnsureKnownUsersDepartmentColumnAsync(connection, cancellationToken).ConfigureAwait(false);
+    }
+
+    private static async Task EnsureKnownUsersDepartmentColumnAsync(SqliteConnection connection, CancellationToken cancellationToken)
+    {
+        await using var tableInfoCommand = connection.CreateCommand();
+        tableInfoCommand.CommandText = "PRAGMA table_info(KnownUsers);";
+
+        await using var reader = await tableInfoCommand.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
+        while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false))
+        {
+            if (string.Equals(reader.GetString(1), "Department", StringComparison.OrdinalIgnoreCase))
+            {
+                return;
+            }
+        }
+
+        await using var alterCommand = connection.CreateCommand();
+        alterCommand.CommandText = "ALTER TABLE KnownUsers ADD COLUMN Department TEXT NOT NULL DEFAULT '默认部门';";
+        await alterCommand.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
     }
 
     private static readonly string[] CreateStatements =
@@ -30,6 +51,7 @@ public sealed class DatabaseInitializer
         CREATE TABLE IF NOT EXISTS KnownUsers (
             UserId TEXT PRIMARY KEY,
             Nickname TEXT NOT NULL,
+            Department TEXT NOT NULL DEFAULT '默认部门',
             IpAddress TEXT NOT NULL,
             MessagePort INTEGER NOT NULL,
             FilePort INTEGER NOT NULL,
@@ -71,4 +93,3 @@ public sealed class DatabaseInitializer
         """
     ];
 }
-

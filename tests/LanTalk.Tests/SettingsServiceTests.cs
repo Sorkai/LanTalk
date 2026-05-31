@@ -28,6 +28,7 @@ public sealed class SettingsServiceTests
         var settings = await service.LoadAsync();
 
         settings.Nickname = "测试用户";
+        settings.Department = "研发部";
         settings.FileSavePath = Path.Combine(Path.GetTempPath(), "LanTalkFiles");
         settings.SaveChatHistory = false;
         settings.ThemeMode = "Dark";
@@ -42,6 +43,7 @@ public sealed class SettingsServiceTests
 
         Assert.Equal(settings.UserId, loaded.UserId);
         Assert.Equal("测试用户", loaded.Nickname);
+        Assert.Equal("研发部", loaded.Department);
         Assert.Equal(settings.FileSavePath, loaded.FileSavePath);
         Assert.False(loaded.SaveChatHistory);
         Assert.Equal("Dark", loaded.ThemeMode);
@@ -49,6 +51,21 @@ public sealed class SettingsServiceTests
         Assert.Equal(50011, loaded.MessagePort);
         Assert.Equal(50012, loaded.FilePort);
         Assert.Equal("192.168.8.0/24", loaded.DiscoverySubnet);
+    }
+
+    [Fact]
+    public async Task SaveAsync_ShouldNormalizeBlankDepartment()
+    {
+        var settingsPath = CreateTempSettingsPath();
+        var service = new SettingsService(new ConsoleLanTalkLogger(), settingsPath);
+        var settings = await service.LoadAsync();
+
+        settings.Department = "   ";
+
+        await service.SaveAsync(settings);
+        var loaded = await service.LoadAsync();
+
+        Assert.Equal(NetworkConstants.DefaultDepartment, loaded.Department);
     }
 
     [Fact]

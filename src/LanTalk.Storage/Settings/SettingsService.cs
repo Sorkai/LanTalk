@@ -96,6 +96,8 @@ public sealed class SettingsService
             settings.Nickname = "LanTalk 用户";
         }
 
+        settings.Department = NormalizeDepartment(settings.Department);
+
         if (string.IsNullOrWhiteSpace(settings.FileSavePath))
         {
             settings.FileSavePath = Path.Combine(
@@ -135,6 +137,14 @@ public sealed class SettingsService
     private static int NormalizePort(int value, int defaultValue)
     {
         return value is >= 1024 and <= 65535 ? value : defaultValue;
+    }
+
+    private static string NormalizeDepartment(string? value)
+    {
+        var trimmed = value?.Trim();
+        return string.IsNullOrWhiteSpace(trimmed)
+            ? NetworkConstants.DefaultDepartment
+            : trimmed;
     }
 
     private static string NormalizeDiscoverySubnet(string? value)

@@ -118,6 +118,7 @@ public sealed class DiscoveryService : IAsyncDisposable
         {
             UserId = payload.UserId,
             Nickname = payload.Nickname,
+            Department = NormalizeDepartment(payload.Department),
             IpAddress = endpoint.Address.ToString(),
             MessagePort = payload.MessagePort,
             FilePort = payload.FilePort,
@@ -142,7 +143,8 @@ public sealed class DiscoveryService : IAsyncDisposable
             _settings.UserId,
             _settings.Nickname,
             _settings.MessagePort,
-            _settings.FilePort);
+            _settings.FilePort,
+            NormalizeDepartment(_settings.Department));
 
         var packet = new NetworkPacket
         {
@@ -178,6 +180,14 @@ public sealed class DiscoveryService : IAsyncDisposable
                 _logger.Warning($"UDP 自动发现发送到 {target} 失败：{ex.Message}");
             }
         }
+    }
+
+    private static string NormalizeDepartment(string? value)
+    {
+        var trimmed = value?.Trim();
+        return string.IsNullOrWhiteSpace(trimmed)
+            ? NetworkConstants.DefaultDepartment
+            : trimmed;
     }
 
     public async ValueTask DisposeAsync()

@@ -22,6 +22,7 @@ public sealed class OnlineUserRegistry
         {
             UserId = user.UserId,
             Nickname = user.Nickname,
+            Department = user.Department,
             IpAddress = user.IpAddress,
             MessagePort = user.MessagePort,
             FilePort = user.FilePort,
@@ -43,6 +44,7 @@ public sealed class OnlineUserRegistry
         {
             UserId = user.UserId,
             Nickname = user.Nickname,
+            Department = user.Department,
             IpAddress = user.IpAddress,
             MessagePort = user.MessagePort,
             FilePort = user.FilePort,
@@ -69,6 +71,7 @@ public sealed class OnlineUserRegistry
             {
                 UserId = user.UserId,
                 Nickname = user.Nickname,
+                Department = user.Department,
                 IpAddress = user.IpAddress,
                 MessagePort = user.MessagePort,
                 FilePort = user.FilePort,
@@ -93,4 +96,3 @@ public sealed class OnlineUserRegistry
         UsersChanged?.Invoke(this, Users);
     }
 }
-

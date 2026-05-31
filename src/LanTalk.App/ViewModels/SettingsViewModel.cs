@@ -12,6 +12,9 @@ public sealed partial class SettingsViewModel : ViewModelBase
     private string nickname = string.Empty;
 
     [ObservableProperty]
+    private string department = NetworkConstants.DefaultDepartment;
+
+    [ObservableProperty]
     private string fileSavePath = string.Empty;
 
     [ObservableProperty]
@@ -74,6 +77,7 @@ public sealed partial class SettingsViewModel : ViewModelBase
         var viewModel = new SettingsViewModel
         {
             Nickname = settings.Nickname,
+            Department = settings.Department,
             FileSavePath = settings.FileSavePath,
             SaveChatHistory = settings.SaveChatHistory,
             ThemeMode = settings.ThemeMode,

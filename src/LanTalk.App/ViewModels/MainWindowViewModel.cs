@@ -52,6 +52,9 @@ public sealed partial class MainWindowViewModel : ViewModelBase
     private string localNickname = "LanTalk 用户";
 
     [ObservableProperty]
+    private string localDepartment = NetworkConstants.DefaultDepartment;
+
+    [ObservableProperty]
     private string localIpAddress = "正在检测";
 
     [ObservableProperty]
@@ -106,6 +109,8 @@ public sealed partial class MainWindowViewModel : ViewModelBase
     public ObservableCollection<OnlineUserViewModel> FilteredOnlineUsers { get; } = [];
 
     public ObservableCollection<OnlineUserViewModel> FilteredRecentSessions { get; } = [];
+
+    public ObservableCollection<ContactGroupViewModel> ContactGroups { get; } = [];
 
     public ObservableCollection<ChatMessageViewModel> Messages { get; } = [];
 
@@ -165,8 +170,9 @@ public sealed partial class MainWindowViewModel : ViewModelBase
         CurrentSessionTitle = value.Nickname;
         CurrentSessionSubtitle = value.UserId == NetworkConstants.BroadcastSessionId
             ? "广播给当前所有在线用户"
-            : $"{value.IpAddress} · {value.StatusText}";
+            : $"{value.DepartmentText} · {value.IpAddress} · {value.StatusText}";
         value.UnreadCount = 0;
+        RefreshSelectionState(value);
         RefreshUnreadState();
         UpsertRecentSession(value, moveToTop: true);
         _ = LoadSessionMessagesAsync(value);
@@ -282,6 +288,7 @@ public sealed partial class MainWindowViewModel : ViewModelBase
             !string.Equals(_settings.DiscoverySubnet, normalizedDiscoverySubnet, StringComparison.OrdinalIgnoreCase);
 
         _settings.Nickname = Settings.Nickname.Trim();
+        _settings.Department = NormalizeDepartment(Settings.Department);
         _settings.FileSavePath = Settings.FileSavePath.Trim();
         _settings.SaveChatHistory = Settings.SaveChatHistory;
         _settings.ThemeMode = Settings.ThemeMode;
@@ -294,6 +301,7 @@ public sealed partial class MainWindowViewModel : ViewModelBase
         await _settingsService.SaveAsync(_settings);
         AppThemeService.Apply(_settings);
         LocalNickname = _settings.Nickname;
+        LocalDepartment = _settings.Department;
         IsSettingsPaneOpen = false;
         StatusMessage = portsChanged
             ? "设置已保存。网络发现设置变更将在重启 LanTalk 后生效。"
@@ -387,6 +395,33 @@ public sealed partial class MainWindowViewModel : ViewModelBase
     private void SelectBroadcast()
     {
         SelectedUser = _broadcastSession;
+    }
+
+    [RelayCommand]
+    private void SelectNextRecentSession()
+    {
+        SelectRelativeRecentSession(1);
+    }
+
+    [RelayCommand]
+    private void SelectPreviousRecentSession()
+    {
+        SelectRelativeRecentSession(-1);
+    }
+
+    [RelayCommand]
+    private void SelectNextUnreadSession()
+    {
+        var unreadSessions = OrderRecentSessions(RecentSessions.Where(session => session.UnreadCount > 0)).ToArray();
+        if (unreadSessions.Length == 0)
+        {
+            StatusMessage = "没有未读会话。";
+            return;
+        }
+
+        var currentIndex = FindSessionIndex(unreadSessions, SelectedUser?.UserId);
+        var nextIndex = currentIndex < 0 ? 0 : (currentIndex + 1) % unreadSessions.Length;
+        SelectedUser = unreadSessions[nextIndex];
     }
 
     [RelayCommand]
@@ -540,6 +575,7 @@ public sealed partial class MainWindowViewModel : ViewModelBase
             _settings = await _settingsService.LoadAsync();
             AppThemeService.Apply(_settings);
             LocalNickname = _settings.Nickname;
+            LocalDepartment = _settings.Department;
             LocalIpAddress = NetworkInterfaceHelper.GetLocalIpAddress();
             LocalStatusText = "在线";
             Settings = SettingsViewModel.FromSettings(_settings);
@@ -945,6 +981,7 @@ public sealed partial class MainWindowViewModel : ViewModelBase
         {
             UserId = userId,
             Nickname = string.IsNullOrWhiteSpace(nickname) ? userId : nickname,
+            Department = NetworkConstants.DefaultDepartment,
             IpAddress = ipAddress,
             Status = UserStatus.Offline,
             LastMessage = "已记录为已知联系人"
@@ -968,6 +1005,7 @@ public sealed partial class MainWindowViewModel : ViewModelBase
         }
 
         existing.Nickname = user.Nickname;
+        existing.Department = user.Department;
         existing.IpAddress = user.IpAddress;
         existing.MessagePort = user.MessagePort;
         existing.FilePort = user.FilePort;
@@ -990,26 +1028,27 @@ public sealed partial class MainWindowViewModel : ViewModelBase
             session.LastMessage = lastMessage;
         }
 
+        if (moveToTop)
+        {
+            session.LastActiveTime = DateTimeOffset.Now;
+        }
+
         var existing = RecentSessions.FirstOrDefault(item => item.UserId == session.UserId);
         if (existing is not null)
         {
-            var index = RecentSessions.IndexOf(existing);
-            if (moveToTop && index > 0)
+            if (moveToTop)
             {
-                RecentSessions.Move(index, 0);
+                ReorderRecentSessions();
             }
 
             RefreshFilteredUsers();
             return;
         }
 
+        RecentSessions.Add(session);
         if (moveToTop)
         {
-            RecentSessions.Insert(0, session);
-        }
-        else
-        {
-            RecentSessions.Add(session);
+            ReorderRecentSessions();
         }
 
         RefreshFilteredUsers();
@@ -1024,6 +1063,7 @@ public sealed partial class MainWindowViewModel : ViewModelBase
             {
                 UserId = knownUser.UserId,
                 Nickname = knownUser.Nickname,
+                Department = knownUser.Department,
                 IpAddress = knownUser.IpAddress,
                 MessagePort = knownUser.MessagePort,
                 FilePort = knownUser.FilePort,
@@ -1043,7 +1083,25 @@ public sealed partial class MainWindowViewModel : ViewModelBase
     {
         var query = SearchText.Trim();
         ReplaceCollection(FilteredRecentSessions, RecentSessions.Where(user => MatchesSearch(user, query)));
-        ReplaceCollection(FilteredOnlineUsers, OnlineUsers.Where(user => MatchesSearch(user, query)));
+
+        var filteredUsers = OnlineUsers
+            .Where(user => MatchesSearch(user, query))
+            .OrderBy(user => user.DepartmentText, StringComparer.OrdinalIgnoreCase)
+            .ThenByDescending(user => user.Status == UserStatus.Online)
+            .ThenBy(user => user.Nickname, StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+
+        ReplaceCollection(FilteredOnlineUsers, filteredUsers);
+        ReplaceCollection(
+            ContactGroups,
+            filteredUsers
+                .GroupBy(user => user.DepartmentText, StringComparer.OrdinalIgnoreCase)
+                .OrderBy(group => group.Key, StringComparer.OrdinalIgnoreCase)
+                .Select(group => new ContactGroupViewModel(
+                    group.Key,
+                    group
+                        .OrderByDescending(user => user.Status == UserStatus.Online)
+                        .ThenBy(user => user.Nickname, StringComparer.OrdinalIgnoreCase))));
     }
 
     private static bool MatchesSearch(OnlineUserViewModel user, string query)
@@ -1054,6 +1112,7 @@ public sealed partial class MainWindowViewModel : ViewModelBase
         }
 
         return ContainsIgnoreCase(user.Nickname, query) ||
+            ContainsIgnoreCase(user.DepartmentText, query) ||
             ContainsIgnoreCase(user.IpAddress, query) ||
             ContainsIgnoreCase(user.LastMessage, query) ||
             ContainsIgnoreCase(user.StatusText, query);
@@ -1074,14 +1133,88 @@ public sealed partial class MainWindowViewModel : ViewModelBase
         TotalUnreadCount = RecentSessions.Sum(session => session.UnreadCount);
     }
 
+    private void ReorderRecentSessions()
+    {
+        var ordered = OrderRecentSessions(RecentSessions).ToArray();
+        for (var targetIndex = 0; targetIndex < ordered.Length; targetIndex++)
+        {
+            var currentIndex = RecentSessions.IndexOf(ordered[targetIndex]);
+            if (currentIndex >= 0 && currentIndex != targetIndex)
+            {
+                RecentSessions.Move(currentIndex, targetIndex);
+            }
+        }
+    }
+
+    private static IEnumerable<OnlineUserViewModel> OrderRecentSessions(IEnumerable<OnlineUserViewModel> sessions)
+    {
+        return sessions
+            .OrderByDescending(session => session.UnreadCount > 0)
+            .ThenByDescending(session => session.LastActiveTime)
+            .ThenBy(session => session.Nickname, StringComparer.OrdinalIgnoreCase);
+    }
+
+    private void RefreshSelectionState(OnlineUserViewModel selected)
+    {
+        foreach (var user in OnlineUsers)
+        {
+            user.IsSelected = user.UserId == selected.UserId;
+        }
+
+        foreach (var session in RecentSessions)
+        {
+            session.IsSelected = session.UserId == selected.UserId;
+        }
+    }
+
+    private void SelectRelativeRecentSession(int offset)
+    {
+        var sessions = FilteredRecentSessions.Count > 0 ? FilteredRecentSessions : RecentSessions;
+        if (sessions.Count == 0)
+        {
+            StatusMessage = "暂无可切换的会话。";
+            return;
+        }
+
+        var currentIndex = FindSessionIndex(sessions, SelectedUser?.UserId);
+        var nextIndex = currentIndex < 0 ? 0 : (currentIndex + offset + sessions.Count) % sessions.Count;
+        SelectedUser = sessions[nextIndex];
+    }
+
+    private static int FindSessionIndex(IReadOnlyList<OnlineUserViewModel> sessions, string? userId)
+    {
+        if (string.IsNullOrWhiteSpace(userId))
+        {
+            return -1;
+        }
+
+        for (var i = 0; i < sessions.Count; i++)
+        {
+            if (sessions[i].UserId == userId)
+            {
+                return i;
+            }
+        }
+
+        return -1;
+    }
+
+    private static string NormalizeDepartment(string? value)
+    {
+        var trimmed = value?.Trim();
+        return string.IsNullOrWhiteSpace(trimmed)
+            ? NetworkConstants.DefaultDepartment
+            : trimmed;
+    }
+
     private void RequestNotification(string title, string message, string sessionId)
     {
         UserNotificationRequested?.Invoke(this, new UserNotificationEventArgs(title, message, sessionId));
     }
 
-    private static void ReplaceCollection(
-        ObservableCollection<OnlineUserViewModel> target,
-        IEnumerable<OnlineUserViewModel> source)
+    private static void ReplaceCollection<T>(
+        ObservableCollection<T> target,
+        IEnumerable<T> source)
     {
         target.Clear();
         foreach (var item in source)
@@ -1434,6 +1567,7 @@ public sealed partial class MainWindowViewModel : ViewModelBase
         {
             UserId = user.UserId,
             Nickname = user.Nickname,
+            Department = user.DepartmentText,
             IpAddress = user.IpAddress,
             MessagePort = user.MessagePort,
             FilePort = user.FilePort,

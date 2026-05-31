@@ -21,6 +21,12 @@
         <conv:GreaterThanZeroConverter x:Key="GreaterThanZeroConverter"/>
     </Window.Resources>
 
+    <Window.KeyBindings>
+        <KeyBinding Gesture="Ctrl+Tab" Command="{Binding SelectNextRecentSessionCommand}"/>
+        <KeyBinding Gesture="Ctrl+Shift+Tab" Command="{Binding SelectPreviousRecentSessionCommand}"/>
+        <KeyBinding Gesture="Ctrl+U" Command="{Binding SelectNextUnreadSessionCommand}"/>
+    </Window.KeyBindings>
+
     <Design.DataContext>
         <vm:MainWindowViewModel/>
     </Design.DataContext>
@@ -36,7 +42,7 @@
                         <TextBlock Text="L" Foreground="White" FontWeight="Bold" HorizontalAlignment="Center" VerticalAlignment="Center"/>
                     </Border>
                     <TextBlock Text="LanTalk" FontSize="16" FontWeight="SemiBold" VerticalAlignment="Center"/>
-                    <TextBlock Text="局域网即时通信 MVP" Classes="caption" VerticalAlignment="Center"/>
+                    <TextBlock Text="局域网即时通信" Classes="caption" VerticalAlignment="Center"/>
                 </StackPanel>
 
                 <TextBlock Grid.Column="1"
@@ -69,6 +75,7 @@
                             </Border>
                             <StackPanel Grid.Column="1" Spacing="2" VerticalAlignment="Center">
                                 <TextBlock Text="{Binding LocalNickname}" FontWeight="SemiBold" TextTrimming="CharacterEllipsis"/>
+                                <TextBlock Text="{Binding LocalDepartment}" Classes="caption" TextTrimming="CharacterEllipsis"/>
                                 <StackPanel Orientation="Horizontal" Spacing="6">
                                     <TextBlock Text="{Binding LocalIpAddress}" Classes="caption"/>
                                     <TextBlock Text="·" Classes="caption"/>
@@ -114,15 +121,19 @@
                                                     Background="Transparent"
                                                     Command="{Binding $parent[Window].DataContext.SelectUserCommand}"
                                                     CommandParameter="{Binding}">
-                                                <Grid ColumnDefinitions="36,*,Auto" ColumnSpacing="8">
-                                                    <Border Width="36" Height="36" CornerRadius="18" Background="{StaticResource LanTalkAvatarBrush}">
+                                                <Grid ColumnDefinitions="3,36,*,Auto" ColumnSpacing="8">
+                                                    <Border Width="3"
+                                                            Background="{StaticResource LanTalkBlueBrush}"
+                                                            CornerRadius="2"
+                                                            IsVisible="{Binding IsSelected}"/>
+                                                    <Border Grid.Column="1" Width="36" Height="36" CornerRadius="18" Background="{StaticResource LanTalkAvatarBrush}">
                                                         <TextBlock Text="{Binding Initial}" Foreground="{StaticResource LanTalkBlueDarkBrush}" FontWeight="SemiBold" HorizontalAlignment="Center" VerticalAlignment="Center"/>
                                                     </Border>
-                                                    <StackPanel Grid.Column="1" Spacing="2">
+                                                    <StackPanel Grid.Column="2" Spacing="2">
                                                         <TextBlock Text="{Binding Nickname}" FontWeight="SemiBold" TextTrimming="CharacterEllipsis"/>
                                                         <TextBlock Text="{Binding LastMessage}" Classes="caption" TextTrimming="CharacterEllipsis"/>
                                                     </StackPanel>
-                                                    <Border Grid.Column="2"
+                                                    <Border Grid.Column="3"
                                                             IsVisible="{Binding UnreadCount, Converter={StaticResource GreaterThanZeroConverter}}"
                                                             Background="{StaticResource LanTalkBlueBrush}"
                                                             CornerRadius="10"
@@ -139,31 +150,47 @@
 
                             <StackPanel Spacing="8">
                                 <Grid ColumnDefinitions="*,Auto">
-                                    <TextBlock Text="在线用户" Classes="caption" FontWeight="SemiBold"/>
+                                    <TextBlock Text="联系人分组" Classes="caption" FontWeight="SemiBold"/>
                                     <TextBlock Grid.Column="1" Text="{Binding OnlineCount}" Classes="caption"/>
                                 </Grid>
-                                <ItemsControl ItemsSource="{Binding FilteredOnlineUsers}">
+                                <ItemsControl ItemsSource="{Binding ContactGroups}">
                                     <ItemsControl.ItemTemplate>
-                                        <DataTemplate x:DataType="vm:OnlineUserViewModel">
-                                            <Button HorizontalAlignment="Stretch"
-                                                    Padding="8"
-                                                    CornerRadius="8"
-                                                    Background="Transparent"
-                                                    Command="{Binding $parent[Window].DataContext.SelectUserCommand}"
-                                                    CommandParameter="{Binding}">
-                                                <Grid ColumnDefinitions="36,*,Auto" ColumnSpacing="8">
-                                                    <Border Width="36" Height="36" CornerRadius="18" Background="{StaticResource LanTalkAvatarBrush}">
-                                                        <TextBlock Text="{Binding Initial}" Foreground="{StaticResource LanTalkBlueDarkBrush}" FontWeight="SemiBold" HorizontalAlignment="Center" VerticalAlignment="Center"/>
-                                                    </Border>
-                                                    <StackPanel Grid.Column="1" Spacing="2">
-                                                        <TextBlock Text="{Binding Nickname}" FontWeight="SemiBold" TextTrimming="CharacterEllipsis"/>
-                                                        <TextBlock Text="{Binding IpAddress}" Classes="caption"/>
-                                                    </StackPanel>
-                                                    <StackPanel Grid.Column="2" HorizontalAlignment="Right" VerticalAlignment="Center">
-                                                        <TextBlock Text="{Binding StatusText}" Classes="caption"/>
-                                                    </StackPanel>
+                                        <DataTemplate x:DataType="vm:ContactGroupViewModel">
+                                            <StackPanel Spacing="6" Margin="0,0,0,8">
+                                                <Grid ColumnDefinitions="*,Auto">
+                                                    <TextBlock Text="{Binding Name}" FontWeight="SemiBold" TextTrimming="CharacterEllipsis"/>
+                                                    <TextBlock Grid.Column="1" Text="{Binding Summary}" Classes="caption"/>
                                                 </Grid>
-                                            </Button>
+                                                <ItemsControl ItemsSource="{Binding Users}">
+                                                    <ItemsControl.ItemTemplate>
+                                                        <DataTemplate x:DataType="vm:OnlineUserViewModel">
+                                                            <Button HorizontalAlignment="Stretch"
+                                                                    Padding="8"
+                                                                    CornerRadius="8"
+                                                                    Background="Transparent"
+                                                                    Command="{Binding $parent[Window].DataContext.SelectUserCommand}"
+                                                                    CommandParameter="{Binding}">
+                                                                <Grid ColumnDefinitions="3,36,*,Auto" ColumnSpacing="8">
+                                                                    <Border Width="3"
+                                                                            Background="{StaticResource LanTalkBlueBrush}"
+                                                                            CornerRadius="2"
+                                                                            IsVisible="{Binding IsSelected}"/>
+                                                                    <Border Grid.Column="1" Width="36" Height="36" CornerRadius="18" Background="{StaticResource LanTalkAvatarBrush}">
+                                                                        <TextBlock Text="{Binding Initial}" Foreground="{StaticResource LanTalkBlueDarkBrush}" FontWeight="SemiBold" HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                                                                    </Border>
+                                                                    <StackPanel Grid.Column="2" Spacing="2">
+                                                                        <TextBlock Text="{Binding Nickname}" FontWeight="SemiBold" TextTrimming="CharacterEllipsis"/>
+                                                                        <TextBlock Text="{Binding IpAddress}" Classes="caption"/>
+                                                                    </StackPanel>
+                                                                    <StackPanel Grid.Column="3" HorizontalAlignment="Right" VerticalAlignment="Center">
+                                                                        <TextBlock Text="{Binding StatusText}" Classes="caption"/>
+                                                                    </StackPanel>
+                                                                </Grid>
+                                                            </Button>
+                                                        </DataTemplate>
+                                                    </ItemsControl.ItemTemplate>
+                                                </ItemsControl>
+                                            </StackPanel>
                                         </DataTemplate>
                                     </ItemsControl.ItemTemplate>
                                 </ItemsControl>
@@ -196,6 +223,9 @@
                             <TextBlock Text="{Binding CurrentSessionSubtitle}" Classes="caption"/>
                         </StackPanel>
                         <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="10" VerticalAlignment="Center">
+                            <Button Content="上一个" Command="{Binding SelectPreviousRecentSessionCommand}" ToolTip.Tip="切换到上一会话"/>
+                            <Button Content="下一个" Command="{Binding SelectNextRecentSessionCommand}" ToolTip.Tip="切换到下一会话"/>
+                            <Button Content="未读" Command="{Binding SelectNextUnreadSessionCommand}" ToolTip.Tip="切换到未读会话"/>
                             <Button Content="刷新" Command="{Binding RefreshDiscoveryCommand}" ToolTip.Tip="重新广播上线消息并刷新在线状态"/>
                             <Button Content="设置" Command="{Binding OpenSettingsCommand}"/>
                         </StackPanel>
@@ -311,13 +341,18 @@
                         <ScrollViewer Grid.Row="1" Margin="0,24,0,0">
                             <StackPanel Spacing="16">
                                 <StackPanel Spacing="6">
-                                <TextBlock Text="昵称" FontWeight="SemiBold"/>
-                                <TextBox Text="{Binding Settings.Nickname}" PlaceholderText="请输入昵称"/>
+                                    <TextBlock Text="昵称" FontWeight="SemiBold"/>
+                                    <TextBox Text="{Binding Settings.Nickname}" PlaceholderText="请输入昵称"/>
                                 </StackPanel>
 
                                 <StackPanel Spacing="6">
-                                <TextBlock Text="文件接收目录" FontWeight="SemiBold"/>
-                                <TextBox Text="{Binding Settings.FileSavePath}" PlaceholderText="选择或输入文件保存目录"/>
+                                    <TextBlock Text="部门/分组" FontWeight="SemiBold"/>
+                                    <TextBox Text="{Binding Settings.Department}" PlaceholderText="例如：研发部、财务部、一班"/>
+                                </StackPanel>
+
+                                <StackPanel Spacing="6">
+                                    <TextBlock Text="文件接收目录" FontWeight="SemiBold"/>
+                                    <TextBox Text="{Binding Settings.FileSavePath}" PlaceholderText="选择或输入文件保存目录"/>
                                 </StackPanel>
 
                                 <CheckBox Content="保存聊天记录" IsChecked="{Binding Settings.SaveChatHistory}"/>

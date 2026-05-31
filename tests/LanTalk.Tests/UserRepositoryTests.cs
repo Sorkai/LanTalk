@@ -21,6 +21,7 @@ public sealed class UserRepositoryTests
         {
             UserId = "user-a",
             Nickname = "张同学",
+            Department = "研发部",
             IpAddress = "192.168.1.24",
             MessagePort = 50001,
             FilePort = 50002,
@@ -31,6 +32,7 @@ public sealed class UserRepositoryTests
         var users = await repository.LoadRecentAsync();
         Assert.Single(users);
         Assert.Equal("张同学", users[0].Nickname);
+        Assert.Equal("研发部", users[0].Department);
         Assert.Equal(UserStatus.Online, users[0].Status);
 
         SqliteConnection.ClearAllPools();

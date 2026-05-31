@@ -280,6 +280,13 @@
   - 托盘 tooltip 和菜单显示未读总数。
   - 收到私聊、广播、文件请求时触发通知事件；窗口隐藏、最小化或非活跃时弹出桌面提醒。
 
+## 2026-05-31 联系人分组与多会话体验发现
+- 部门/分组需要成为真实协议和存储字段，而不是只在 UI 上分组；本轮已把 `Department` 加入 `AppSettings`、`UserInfo`、`DiscoveryPayload` 和 `KnownUsers`。
+- 为兼容旧数据库，`DatabaseInitializer` 会检查 `KnownUsers` 是否缺少 `Department` 列，缺失时用默认部门迁移。
+- 为兼容旧发现包，`DiscoveryPayload.Department` 使用默认值，接收端仍会对空白部门回落到“默认部门”。
+- 最近会话排序应由真实互动驱动：收到消息、发送消息、选择会话会刷新活跃时间；普通 UDP 心跳/发现刷新不会持续把联系人顶到最前。
+- 多会话切换采用 ViewModel 命令加按钮/快捷键实现，不改变网络层和存储层边界。
+
 ## 资源
 - `C:\pr\LanTalk\AGENTS.md`：主要 Agent / 项目规则。
 - `C:\pr\LanTalk\lan_talk_codex项目说明文档.md`：项目需求、架构、里程碑、验收要求。

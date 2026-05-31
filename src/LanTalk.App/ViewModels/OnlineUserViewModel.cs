@@ -1,4 +1,5 @@
 using CommunityToolkit.Mvvm.ComponentModel;
+using LanTalk.Core.Constants;
 using LanTalk.Core.Enums;
 using LanTalk.Core.Models;
 
@@ -11,6 +12,9 @@ public sealed partial class OnlineUserViewModel : ViewModelBase
 
     [ObservableProperty]
     private string nickname = string.Empty;
+
+    [ObservableProperty]
+    private string department = NetworkConstants.DefaultDepartment;
 
     [ObservableProperty]
     private string ipAddress = string.Empty;
@@ -30,6 +34,12 @@ public sealed partial class OnlineUserViewModel : ViewModelBase
     [ObservableProperty]
     private int unreadCount;
 
+    [ObservableProperty]
+    private DateTimeOffset lastActiveTime = DateTimeOffset.MinValue;
+
+    [ObservableProperty]
+    private bool isSelected;
+
     public string Initial => string.IsNullOrWhiteSpace(Nickname)
         ? "?"
         : Nickname[..1].ToUpperInvariant();
@@ -41,9 +51,18 @@ public sealed partial class OnlineUserViewModel : ViewModelBase
         _ => "离线"
     };
 
+    public string DepartmentText => string.IsNullOrWhiteSpace(Department)
+        ? NetworkConstants.DefaultDepartment
+        : Department.Trim();
+
     partial void OnNicknameChanged(string value)
     {
         OnPropertyChanged(nameof(Initial));
+    }
+
+    partial void OnDepartmentChanged(string value)
+    {
+        OnPropertyChanged(nameof(DepartmentText));
     }
 
     partial void OnStatusChanged(UserStatus value)
@@ -57,10 +76,12 @@ public sealed partial class OnlineUserViewModel : ViewModelBase
         {
             UserId = user.UserId,
             Nickname = user.Nickname,
+            Department = user.Department,
             IpAddress = user.IpAddress,
             MessagePort = user.MessagePort,
             FilePort = user.FilePort,
             Status = user.Status,
+            LastActiveTime = user.LastSeenTime,
             LastMessage = user.Status == UserStatus.Online ? "可以开始聊天" : "等待重新上线"
         };
     }

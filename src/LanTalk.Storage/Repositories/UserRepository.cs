@@ -1,3 +1,4 @@
+using LanTalk.Core.Constants;
 using LanTalk.Core.Enums;
 using LanTalk.Core.Models;
 using LanTalk.Storage.Database;
@@ -22,12 +23,13 @@ public sealed class UserRepository
         command.CommandText =
             """
             INSERT OR REPLACE INTO KnownUsers
-                (UserId, Nickname, IpAddress, MessagePort, FilePort, Status, LastSeenTime)
+                (UserId, Nickname, Department, IpAddress, MessagePort, FilePort, Status, LastSeenTime)
             VALUES
-                ($userId, $nickname, $ipAddress, $messagePort, $filePort, $status, $lastSeenTime);
+                ($userId, $nickname, $department, $ipAddress, $messagePort, $filePort, $status, $lastSeenTime);
             """;
         command.Parameters.AddWithValue("$userId", user.UserId);
         command.Parameters.AddWithValue("$nickname", user.Nickname);
+        command.Parameters.AddWithValue("$department", string.IsNullOrWhiteSpace(user.Department) ? NetworkConstants.DefaultDepartment : user.Department.Trim());
         command.Parameters.AddWithValue("$ipAddress", user.IpAddress);
         command.Parameters.AddWithValue("$messagePort", user.MessagePort);
         command.Parameters.AddWithValue("$filePort", user.FilePort);
@@ -53,7 +55,7 @@ public sealed class UserRepository
         await using var command = connection.CreateCommand();
         command.CommandText =
             """
-            SELECT UserId, Nickname, IpAddress, MessagePort, FilePort, Status, LastSeenTime
+            SELECT UserId, Nickname, Department, IpAddress, MessagePort, FilePort, Status, LastSeenTime
             FROM KnownUsers
             ORDER BY LastSeenTime DESC
             LIMIT $limit;
@@ -69,11 +71,12 @@ public sealed class UserRepository
             {
                 UserId = reader.GetString(0),
                 Nickname = reader.GetString(1),
-                IpAddress = reader.GetString(2),
-                MessagePort = reader.GetInt32(3),
-                FilePort = reader.GetInt32(4),
-                Status = Enum.Parse<UserStatus>(reader.GetString(5)),
-                LastSeenTime = DateTimeOffset.Parse(reader.GetString(6))
+                Department = reader.GetString(2),
+                IpAddress = reader.GetString(3),
+                MessagePort = reader.GetInt32(4),
+                FilePort = reader.GetInt32(5),
+                Status = Enum.Parse<UserStatus>(reader.GetString(6)),
+                LastSeenTime = DateTimeOffset.Parse(reader.GetString(7))
             });
         }
 

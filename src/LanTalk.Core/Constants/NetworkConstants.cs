@@ -6,6 +6,7 @@ public static class NetworkConstants
     public const int DefaultMessagePort = 50001;
     public const int DefaultFilePort = 50002;
     public const string DefaultDiscoverySubnet = "Auto";
+    public const string DefaultDepartment = "默认部门";
     public const int HeartbeatIntervalSeconds = 5;
     public const int OfflineTimeoutSeconds = 15;
     public const int RecentMessageLimit = 50;
