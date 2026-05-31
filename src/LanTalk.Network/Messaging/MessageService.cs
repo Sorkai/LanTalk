@@ -220,17 +220,9 @@ public sealed class MessageService : IAsyncDisposable
 
         foreach (var receiver in receivers.Where(user => user.UserId != localSettings.UserId && user.Status == UserStatus.Online))
         {
-            var packet = new NetworkPacket
-            {
-                Type = PacketType.GroupMessage,
-                FromUserId = localSettings.UserId,
-                ToUserId = receiver.UserId,
-                PayloadJson = payloadJson
-            };
-
             try
             {
-                await _client.SendAsync(receiver.IpAddress, receiver.MessagePort, packet, cancellationToken).ConfigureAwait(false);
+                await SendGroupMessagePayloadJsonAsync(localSettings.UserId, receiver, payloadJson, cancellationToken).ConfigureAwait(false);
                 success++;
             }
             catch (Exception ex)
@@ -241,6 +233,33 @@ public sealed class MessageService : IAsyncDisposable
         }
 
         return new BroadcastSendResult(success, failure);
+    }
+
+    public Task SendGroupMessageToAsync(
+        AppSettings localSettings,
+        UserInfo receiver,
+        GroupMessagePayload payload,
+        CancellationToken cancellationToken = default)
+    {
+        var payloadJson = JsonSerializer.Serialize(payload, LanTalkJsonContext.Default.GroupMessagePayload);
+        return SendGroupMessagePayloadJsonAsync(localSettings.UserId, receiver, payloadJson, cancellationToken);
+    }
+
+    private Task SendGroupMessagePayloadJsonAsync(
+        string fromUserId,
+        UserInfo receiver,
+        string payloadJson,
+        CancellationToken cancellationToken)
+    {
+        var packet = new NetworkPacket
+        {
+            Type = PacketType.GroupMessage,
+            FromUserId = fromUserId,
+            ToUserId = receiver.UserId,
+            PayloadJson = payloadJson
+        };
+
+        return _client.SendAsync(receiver.IpAddress, receiver.MessagePort, packet, cancellationToken);
     }
 
     private NetworkPacket CreatePrivateMessagePacket(string fromUserId, string toUserId, TextMessagePayload payload)

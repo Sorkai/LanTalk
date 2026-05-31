@@ -330,6 +330,12 @@
 - 接收方收到带 `GroupId` 的文件请求时会自动恢复群组会话，永久群组继续写入 `ChatGroups`；图片历史写入群组 `SessionId`，本地路径存在时可预览。
 - 当前第一阶段只处理在线成员；离线成员补发需要在下一阶段把未在线/失败投递持久化。
 
+## 2026-05-31 群组文本离线补发实现发现
+- 已新增 `OutgoingDeliveries` 表和 `OutgoingDeliveryRepository`，发送方本地保存待补发的群组文本消息。
+- 群组文本发送改为逐成员发送：在线成员立即 TCP 发送；离线成员或发送失败成员保存 `GroupMessagePayload`，对方重新上线后自动重试。
+- 队列记录使用 `PacketType + RecipientId + MessageId` 组成稳定 `DeliveryId`，避免同一条群组消息重复入队。
+- 本阶段只覆盖群组文本；群组附件补发需要额外保存源文件路径并处理源文件已删除、接收方再次确认等状态。
+
 ## 资源
 - `C:\pr\LanTalk\AGENTS.md`：主要 Agent / 项目规则。
 - `C:\pr\LanTalk\lan_talk_codex项目说明文档.md`：项目需求、架构、里程碑、验收要求。

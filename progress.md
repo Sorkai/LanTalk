@@ -540,3 +540,15 @@
 - 验证结果：
   - `dotnet build LanTalk.sln -v:minimal`：0 警告，0 错误。
   - `dotnet test LanTalk.sln -v:minimal`：45 个测试全部通过。
+
+### 阶段 19：群组文本离线补发
+- **状态：** 已完成并验证通过。
+- 已执行操作：
+  - Core 新增 `OutgoingDeliveryRecord`，表示待补发的 TCP 控制消息。
+  - Storage 新增 `OutgoingDeliveries` 表和 `OutgoingDeliveryRepository`，支持保存、按收件人加载、更新重试信息和删除。
+  - Network 新增 `SendGroupMessageToAsync`，让 App 能按成员逐个发送并精确处理失败成员。
+  - App 群组文本发送改为逐成员处理：在线成员立即发送，离线或发送失败成员进入待补发队列。
+  - 发现服务报告成员重新上线后，App 自动读取该成员的待补发群组消息并重试，成功后删除队列记录。
+- 验证结果：
+  - `dotnet build LanTalk.sln -v:minimal`：0 警告，0 错误。
+  - `dotnet test LanTalk.sln -v:minimal`：48 个测试全部通过。

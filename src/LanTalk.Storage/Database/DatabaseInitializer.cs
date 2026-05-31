@@ -94,6 +94,18 @@ public sealed class DatabaseInitializer
         );
         """,
         """
+        CREATE TABLE IF NOT EXISTS OutgoingDeliveries (
+            DeliveryId TEXT PRIMARY KEY,
+            RecipientId TEXT NOT NULL,
+            PacketType TEXT NOT NULL,
+            PayloadJson TEXT NOT NULL,
+            CreatedTime TEXT NOT NULL,
+            LastAttemptTime TEXT,
+            AttemptCount INTEGER NOT NULL,
+            LastError TEXT
+        );
+        """,
+        """
         CREATE INDEX IF NOT EXISTS IX_ChatMessages_SessionId_SendTime
         ON ChatMessages(SessionId, SendTime);
         """,
@@ -104,6 +116,10 @@ public sealed class DatabaseInitializer
         """
         CREATE INDEX IF NOT EXISTS IX_ChatGroups_UpdatedTime
         ON ChatGroups(UpdatedTime);
+        """,
+        """
+        CREATE INDEX IF NOT EXISTS IX_OutgoingDeliveries_RecipientId_CreatedTime
+        ON OutgoingDeliveries(RecipientId, CreatedTime);
         """
     ];
 }

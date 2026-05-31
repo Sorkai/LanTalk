@@ -37,6 +37,7 @@ public sealed partial class MainWindowViewModel : ViewModelBase
     private readonly FileTransferRepository _fileTransferRepository;
     private readonly UserRepository _userRepository;
     private readonly GroupRepository _groupRepository;
+    private readonly OutgoingDeliveryRepository _outgoingDeliveryRepository;
     private readonly TcpFileServer _fileServer;
     private readonly ILanTalkLogger _logger;
     private readonly Dictionary<string, FileTransferRequest> _pendingFileRequests = new(StringComparer.Ordinal);
@@ -47,6 +48,7 @@ public sealed partial class MainWindowViewModel : ViewModelBase
     private readonly Dictionary<string, ChatMessageViewModel> _incomingFileMessages = new(StringComparer.Ordinal);
     private readonly Dictionary<string, string> _incomingSavePaths = new(StringComparer.Ordinal);
     private readonly HashSet<string> _incomingFinishedNotifications = new(StringComparer.Ordinal);
+    private readonly HashSet<string> _retryingDeliveryRecipients = new(StringComparer.Ordinal);
     private int _previewImagePixelWidth;
     private int _previewImagePixelHeight;
     private CancellationTokenSource? _messageSearchCts;
@@ -207,6 +209,7 @@ public sealed partial class MainWindowViewModel : ViewModelBase
         _fileTransferRepository = services.FileTransferRepository;
         _userRepository = services.UserRepository;
         _groupRepository = services.GroupRepository;
+        _outgoingDeliveryRepository = services.OutgoingDeliveryRepository;
         _fileServer = services.FileServer;
         _logger = services.Logger;
         _discoveryService.UsersChanged += OnDiscoveryUsersChanged;
@@ -468,10 +471,10 @@ public sealed partial class MainWindowViewModel : ViewModelBase
                     SelectedUser.GroupMemberIds.ToArray(),
                     LocalNickname,
                     content);
-                var result = await _messageService.SendGroupMessageAsync(_settings, ResolveGroupReceivers(SelectedUser), payload);
-                StatusMessage = result.FailureCount == 0
+                var result = await SendGroupMessageWithOfflineQueueAsync(SelectedUser, payload);
+                StatusMessage = result.QueuedCount == 0 && result.FailureCount == 0
                     ? $"群组消息已发送给 {result.SuccessCount} 个在线成员。"
-                    : $"群组消息已发送 {result.SuccessCount} 人，失败 {result.FailureCount} 人。";
+                    : $"群组消息已发送 {result.SuccessCount} 人，离线补发 {result.QueuedCount} 人，失败 {result.FailureCount} 人。";
             }
             else if (kind == MessageKind.Broadcast)
             {
@@ -1217,6 +1220,10 @@ public sealed partial class MainWindowViewModel : ViewModelBase
                 }
 
                 UpsertRecentSession(viewModel, viewModel.LastMessage, moveToTop: false);
+                if (viewModel.Status == UserStatus.Online)
+                {
+                    _ = RetryPendingDeliveriesAsync(viewModel);
+                }
             }
 
             OnPropertyChanged(nameof(OnlineCount));
@@ -1964,6 +1971,131 @@ public sealed partial class MainWindowViewModel : ViewModelBase
             .ToArray();
     }
 
+    private async Task<GroupQueuedSendResult> SendGroupMessageWithOfflineQueueAsync(
+        OnlineUserViewModel group,
+        GroupMessagePayload payload,
+        CancellationToken cancellationToken = default)
+    {
+        var memberIds = group.GroupMemberIds
+            .Where(id => !string.IsNullOrWhiteSpace(id) && id != _settings.UserId)
+            .Distinct(StringComparer.Ordinal)
+            .ToArray();
+        var onlineReceivers = ResolveGroupReceivers(group)
+            .Where(user => user.Status == UserStatus.Online)
+            .ToDictionary(user => user.UserId, StringComparer.Ordinal);
+        var payloadJson = JsonSerializer.Serialize(payload, LanTalkJsonContext.Default.GroupMessagePayload);
+        var success = 0;
+        var queued = 0;
+        var failure = 0;
+
+        foreach (var memberId in memberIds)
+        {
+            if (!onlineReceivers.TryGetValue(memberId, out var receiver))
+            {
+                await QueueGroupMessageDeliveryAsync(memberId, payload, payloadJson, "成员当前离线，等待重新上线后补发。", cancellationToken);
+                queued++;
+                continue;
+            }
+
+            try
+            {
+                await _messageService.SendGroupMessageToAsync(_settings, receiver, payload, cancellationToken);
+                success++;
+            }
+            catch (Exception ex)
+            {
+                _logger.Warning($"群组消息发送给 {receiver.Nickname}({receiver.IpAddress}) 失败，已加入离线补发队列：{ex.Message}");
+                await QueueGroupMessageDeliveryAsync(memberId, payload, payloadJson, ex.Message, cancellationToken);
+                queued++;
+            }
+        }
+
+        if (memberIds.Length == 0)
+        {
+            failure = 1;
+        }
+
+        return new GroupQueuedSendResult(success, queued, failure);
+    }
+
+    private Task QueueGroupMessageDeliveryAsync(
+        string recipientId,
+        GroupMessagePayload payload,
+        string payloadJson,
+        string reason,
+        CancellationToken cancellationToken = default)
+    {
+        return _outgoingDeliveryRepository.SaveAsync(new OutgoingDeliveryRecord
+        {
+            DeliveryId = CreateDeliveryId(PacketType.GroupMessage, recipientId, payload.MessageId),
+            RecipientId = recipientId,
+            PacketType = PacketType.GroupMessage,
+            PayloadJson = payloadJson,
+            CreatedTime = DateTimeOffset.Now,
+            LastError = reason
+        }, cancellationToken);
+    }
+
+    private async Task RetryPendingDeliveriesAsync(OnlineUserViewModel user)
+    {
+        if (user.Status != UserStatus.Online || user.UserId == _settings.UserId)
+        {
+            return;
+        }
+
+        lock (_retryingDeliveryRecipients)
+        {
+            if (!_retryingDeliveryRecipients.Add(user.UserId))
+            {
+                return;
+            }
+        }
+
+        try
+        {
+            var receiver = ToUserInfo(user);
+            var records = await _outgoingDeliveryRepository.LoadForRecipientAsync(user.UserId);
+            foreach (var record in records)
+            {
+                if (record.PacketType != PacketType.GroupMessage)
+                {
+                    continue;
+                }
+
+                var payload = JsonSerializer.Deserialize(record.PayloadJson, LanTalkJsonContext.Default.GroupMessagePayload);
+                if (payload is null)
+                {
+                    await _outgoingDeliveryRepository.DeleteAsync(record.DeliveryId);
+                    continue;
+                }
+
+                try
+                {
+                    await _messageService.SendGroupMessageToAsync(_settings, receiver, payload);
+                    await _outgoingDeliveryRepository.DeleteAsync(record.DeliveryId);
+                    StatusMessage = $"已向 {receiver.Nickname} 补发群组“{payload.GroupName}”的离线消息。";
+                }
+                catch (Exception ex)
+                {
+                    await _outgoingDeliveryRepository.MarkAttemptAsync(record.DeliveryId, record.AttemptCount + 1, ex.Message);
+                    _logger.Warning($"离线群组消息补发给 {receiver.Nickname}({receiver.IpAddress}) 失败：{ex.Message}");
+                }
+            }
+        }
+        finally
+        {
+            lock (_retryingDeliveryRecipients)
+            {
+                _retryingDeliveryRecipients.Remove(user.UserId);
+            }
+        }
+    }
+
+    private static string CreateDeliveryId(PacketType packetType, string recipientId, string messageId)
+    {
+        return $"{packetType}:{recipientId}:{messageId}";
+    }
+
     private void ReorderRecentSessions()
     {
         var ordered = OrderRecentSessions(RecentSessions).ToArray();
@@ -2463,10 +2595,11 @@ public sealed partial class MainWindowViewModel : ViewModelBase
         var fileTransferRepository = new FileTransferRepository(connectionFactory);
         var userRepository = new UserRepository(connectionFactory);
         var groupRepository = new GroupRepository(connectionFactory);
+        var outgoingDeliveryRepository = new OutgoingDeliveryRepository(connectionFactory);
         var fileTransferService = new FileTransferService();
         var fileServer = new TcpFileServer(logger);
 
-        return new AppServices(settingsService, historyService, discoveryService, messageService, fileTransferService, fileTransferRepository, userRepository, groupRepository, fileServer, logger);
+        return new AppServices(settingsService, historyService, discoveryService, messageService, fileTransferService, fileTransferRepository, userRepository, groupRepository, outgoingDeliveryRepository, fileServer, logger);
     }
 
     private static async Task<string?> PickFileAsync()
@@ -2603,6 +2736,8 @@ public sealed partial class MainWindowViewModel : ViewModelBase
         return $"{size:0.##} {units[unitIndex]}";
     }
 
+    private sealed record GroupQueuedSendResult(int SuccessCount, int QueuedCount, int FailureCount);
+
     private sealed class GroupFileTransferState
     {
         private readonly HashSet<string> requestSentFileIds = new(StringComparer.Ordinal);
@@ -2691,5 +2826,6 @@ public sealed record AppServices(
     FileTransferRepository FileTransferRepository,
     UserRepository UserRepository,
     GroupRepository GroupRepository,
+    OutgoingDeliveryRepository OutgoingDeliveryRepository,
     TcpFileServer FileServer,
     ILanTalkLogger Logger);
