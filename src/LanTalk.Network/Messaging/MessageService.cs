@@ -212,17 +212,17 @@ public sealed class MessageService : IAsyncDisposable
         AppSettings localSettings,
         IEnumerable<UserInfo> receivers,
         GroupMessagePayload payload,
+        bool encrypt = false,
         CancellationToken cancellationToken = default)
     {
         var success = 0;
         var failure = 0;
-        var payloadJson = JsonSerializer.Serialize(payload, LanTalkJsonContext.Default.GroupMessagePayload);
 
         foreach (var receiver in receivers.Where(user => user.UserId != localSettings.UserId && user.Status == UserStatus.Online))
         {
             try
             {
-                await SendGroupMessagePayloadJsonAsync(localSettings.UserId, receiver, payloadJson, cancellationToken).ConfigureAwait(false);
+                await SendGroupMessageToAsync(localSettings, receiver, payload, encrypt, cancellationToken).ConfigureAwait(false);
                 success++;
             }
             catch (Exception ex)
@@ -239,26 +239,10 @@ public sealed class MessageService : IAsyncDisposable
         AppSettings localSettings,
         UserInfo receiver,
         GroupMessagePayload payload,
+        bool encrypt = false,
         CancellationToken cancellationToken = default)
     {
-        var payloadJson = JsonSerializer.Serialize(payload, LanTalkJsonContext.Default.GroupMessagePayload);
-        return SendGroupMessagePayloadJsonAsync(localSettings.UserId, receiver, payloadJson, cancellationToken);
-    }
-
-    private Task SendGroupMessagePayloadJsonAsync(
-        string fromUserId,
-        UserInfo receiver,
-        string payloadJson,
-        CancellationToken cancellationToken)
-    {
-        var packet = new NetworkPacket
-        {
-            Type = PacketType.GroupMessage,
-            FromUserId = fromUserId,
-            ToUserId = receiver.UserId,
-            PayloadJson = payloadJson
-        };
-
+        var packet = CreateGroupMessagePacket(localSettings.UserId, receiver.UserId, payload, encrypt);
         return _client.SendAsync(receiver.IpAddress, receiver.MessagePort, packet, cancellationToken);
     }
 
@@ -295,6 +279,44 @@ public sealed class MessageService : IAsyncDisposable
         };
     }
 
+    private NetworkPacket CreateGroupMessagePacket(string fromUserId, string toUserId, GroupMessagePayload payload, bool encrypt)
+    {
+        var packetId = Guid.NewGuid().ToString("N");
+        var time = DateTimeOffset.Now;
+        var payloadJson = JsonSerializer.Serialize(payload, LanTalkJsonContext.Default.GroupMessagePayload);
+
+        if (!encrypt)
+        {
+            return new NetworkPacket
+            {
+                PacketId = packetId,
+                Type = PacketType.GroupMessage,
+                FromUserId = fromUserId,
+                ToUserId = toUserId,
+                Time = time,
+                PayloadJson = payloadJson
+            };
+        }
+
+        if (!_encryption.GetState(toUserId).IsEnabled)
+        {
+            throw new InvalidOperationException("目标成员尚未启用一对一端到端加密会话，无法发送加密群组消息。");
+        }
+
+        var associatedData = BuildAssociatedData(packetId, PacketType.GroupMessage, fromUserId, toUserId, time);
+        var encrypted = _encryption.Encrypt(toUserId, Encoding.UTF8.GetBytes(payloadJson), associatedData);
+        return new NetworkPacket
+        {
+            PacketId = packetId,
+            Type = PacketType.GroupMessage,
+            FromUserId = fromUserId,
+            ToUserId = toUserId,
+            Time = time,
+            IsEncrypted = true,
+            PayloadJson = JsonSerializer.Serialize(encrypted, LanTalkJsonContext.Default.EncryptedMessagePayload)
+        };
+    }
+
     private async Task HandlePacketAsync(NetworkPacket packet, IPEndPoint? remoteEndPoint, CancellationToken cancellationToken)
     {
         if (packet.Type == PacketType.EncryptionHello)
@@ -315,11 +337,11 @@ public sealed class MessageService : IAsyncDisposable
             return;
         }
 
-        if (packet.Type == PacketType.PrivateMessage && packet.IsEncrypted)
+        if ((packet.Type is PacketType.PrivateMessage or PacketType.GroupMessage) && packet.IsEncrypted)
         {
             try
             {
-                packet = DecryptPrivateMessagePacket(packet);
+                packet = DecryptMessagePacket(packet);
             }
             catch
             {
@@ -390,7 +412,7 @@ public sealed class MessageService : IAsyncDisposable
         _logger.Info($"对方已关闭端到端加密：{packet.FromUserId}。");
     }
 
-    private NetworkPacket DecryptPrivateMessagePacket(NetworkPacket packet)
+    private NetworkPacket DecryptMessagePacket(NetworkPacket packet)
     {
         try
         {

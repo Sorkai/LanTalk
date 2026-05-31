@@ -25,6 +25,7 @@ public sealed class DatabaseInitializer
 
         await EnsureKnownUsersDepartmentColumnAsync(connection, cancellationToken).ConfigureAwait(false);
         await EnsureOutgoingDeliveriesSourcePathColumnAsync(connection, cancellationToken).ConfigureAwait(false);
+        await EnsureOutgoingDeliveriesRequiresEncryptionColumnAsync(connection, cancellationToken).ConfigureAwait(false);
     }
 
     private static async Task EnsureKnownUsersDepartmentColumnAsync(SqliteConnection connection, CancellationToken cancellationToken)
@@ -62,6 +63,25 @@ public sealed class DatabaseInitializer
 
         await using var alterCommand = connection.CreateCommand();
         alterCommand.CommandText = "ALTER TABLE OutgoingDeliveries ADD COLUMN SourcePath TEXT;";
+        await alterCommand.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
+    }
+
+    private static async Task EnsureOutgoingDeliveriesRequiresEncryptionColumnAsync(SqliteConnection connection, CancellationToken cancellationToken)
+    {
+        await using var tableInfoCommand = connection.CreateCommand();
+        tableInfoCommand.CommandText = "PRAGMA table_info(OutgoingDeliveries);";
+
+        await using var reader = await tableInfoCommand.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
+        while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false))
+        {
+            if (string.Equals(reader.GetString(1), "RequiresEncryption", StringComparison.OrdinalIgnoreCase))
+            {
+                return;
+            }
+        }
+
+        await using var alterCommand = connection.CreateCommand();
+        alterCommand.CommandText = "ALTER TABLE OutgoingDeliveries ADD COLUMN RequiresEncryption INTEGER NOT NULL DEFAULT 0;";
         await alterCommand.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
     }
 
@@ -120,6 +140,7 @@ public sealed class DatabaseInitializer
             PacketType TEXT NOT NULL,
             PayloadJson TEXT NOT NULL,
             SourcePath TEXT,
+            RequiresEncryption INTEGER NOT NULL DEFAULT 0,
             CreatedTime TEXT NOT NULL,
             LastAttemptTime TEXT,
             AttemptCount INTEGER NOT NULL,

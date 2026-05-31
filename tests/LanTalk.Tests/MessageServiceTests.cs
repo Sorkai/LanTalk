@@ -304,4 +304,99 @@ public sealed class MessageServiceTests
         Assert.Equal(PacketType.GroupMessage, packet.Type);
         Assert.Equal("user-a", packet.FromUserId);
     }
+
+    [Fact]
+    public async Task MessageService_ShouldSendEncryptedGroupMessageOverTcp()
+    {
+        var logger = new ConsoleLanTalkLogger();
+        var sender = new MessageService(new TcpMessageClient(), new TcpMessageServer(logger), logger);
+        var receiver = new MessageService(new TcpMessageClient(), new TcpMessageServer(logger), logger);
+        var senderPort = Random.Shared.Next(56000, 57500);
+        var receiverPort = Random.Shared.Next(57501, 59000);
+        var senderSettings = new AppSettings { UserId = "user-a", MessagePort = senderPort, FilePort = senderPort + 2000, UdpPort = senderPort + 3000 };
+        var receiverSettings = new AppSettings { UserId = "user-b", MessagePort = receiverPort, FilePort = receiverPort + 2000, UdpPort = receiverPort + 3000 };
+        var received = new TaskCompletionSource<NetworkPacket>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var senderEncrypted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        receiver.PacketReceived += (_, packet) => received.TrySetResult(packet);
+        sender.EncryptionStateChanged += (_, e) =>
+        {
+            if (e.State.IsEnabled)
+            {
+                senderEncrypted.TrySetResult();
+            }
+        };
+
+        await sender.StartAsync(senderSettings);
+        await receiver.StartAsync(receiverSettings);
+
+        var receiverUser = new UserInfo
+        {
+            UserId = "user-b",
+            Nickname = "接收方",
+            IpAddress = "127.0.0.1",
+            MessagePort = receiverPort,
+            FilePort = receiverPort + 2000,
+            Status = UserStatus.Online,
+            LastSeenTime = DateTimeOffset.Now
+        };
+        var payload = new GroupMessagePayload(
+            "encrypted-group-message-1",
+            "group-a",
+            "项目组",
+            GroupKind.Permanent,
+            ["user-a", "user-b"],
+            "发送方",
+            "这条群消息应该逐成员加密传输");
+
+        await sender.EnableEncryptionAsync(senderSettings, receiverUser);
+        var encryptedCompleted = await Task.WhenAny(senderEncrypted.Task, Task.Delay(TimeSpan.FromSeconds(3)));
+
+        await sender.SendGroupMessageToAsync(senderSettings, receiverUser, payload, encrypt: true);
+        var messageCompleted = await Task.WhenAny(received.Task, Task.Delay(TimeSpan.FromSeconds(3)));
+
+        await sender.StopAsync();
+        await receiver.StopAsync();
+        await sender.DisposeAsync();
+        await receiver.DisposeAsync();
+
+        Assert.Same(senderEncrypted.Task, encryptedCompleted);
+        Assert.Same(received.Task, messageCompleted);
+
+        var packet = await received.Task;
+        var restored = System.Text.Json.JsonSerializer.Deserialize(packet.PayloadJson, LanTalk.Core.Serialization.LanTalkJsonContext.Default.GroupMessagePayload);
+        Assert.False(packet.IsEncrypted);
+        Assert.Equal(PacketType.GroupMessage, packet.Type);
+        Assert.NotNull(restored);
+        Assert.Equal("这条群消息应该逐成员加密传输", restored.Content);
+    }
+
+    [Fact]
+    public async Task MessageService_ShouldRejectEncryptedGroupMessageWithoutSession()
+    {
+        var logger = new ConsoleLanTalkLogger();
+        var sender = new MessageService(new TcpMessageClient(), new TcpMessageServer(logger), logger);
+        var settings = new AppSettings { UserId = "user-a" };
+        var receiver = new UserInfo
+        {
+            UserId = "user-b",
+            Nickname = "接收方",
+            IpAddress = "127.0.0.1",
+            MessagePort = 59901,
+            FilePort = 59902,
+            Status = UserStatus.Online,
+            LastSeenTime = DateTimeOffset.Now
+        };
+        var payload = new GroupMessagePayload(
+            "encrypted-group-message-2",
+            "group-a",
+            "项目组",
+            GroupKind.Permanent,
+            ["user-a", "user-b"],
+            "发送方",
+            "缺少密钥不能发送");
+
+        await Assert.ThrowsAsync<InvalidOperationException>(() => sender.SendGroupMessageToAsync(settings, receiver, payload, encrypt: true));
+        await sender.DisposeAsync();
+    }
 }

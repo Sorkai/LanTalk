@@ -34,15 +34,18 @@
 ## 包结构
 网络包统一使用 `NetworkPacket`，载荷放入 `PayloadJson`，并使用 `LanTalkJsonContext` 进行 Source Generator 序列化。
 
-`NetworkPacket.IsEncrypted` 用于标记 `PrivateMessage` 的 `PayloadJson` 是否为加密载荷。旧客户端或未启用加密的会话会保持默认 `false`，按明文 `TextMessagePayload` 处理。
+`NetworkPacket.IsEncrypted` 用于标记 `PrivateMessage` 或 `GroupMessage` 的 `PayloadJson` 是否为加密载荷。旧客户端或未启用加密的会话会保持默认 `false`，按明文载荷处理。
 
 ## 端到端加密
-- 加密范围：当前实现覆盖一对一私聊文本消息；广播、群组消息、文件元数据和文件流仍使用原协议。
+- 加密范围：当前实现覆盖一对一私聊文本消息，以及群组文本消息的逐成员网络传输；广播、文件元数据和文件流仍使用原协议。
 - 协商流程：用户在私聊会话中启用开关后，发送方发出 `EncryptionHello`，接收方使用临时 ECDH P-256 密钥派生会话密钥并返回 `EncryptionAck`。
 - 消息加密：协商完成后，`PrivateMessage` 的 `PayloadJson` 改为 `EncryptedMessagePayload`，消息正文使用 AES-256-GCM 加密。
 - 关闭流程：任一方关闭开关时发送 `EncryptionCancel`，双方清除内存中的会话密钥。
 - 密钥存储：会话密钥只保存在运行内存中，不写入 SQLite 或设置文件；应用重启后需要重新协商。
 - 指纹校验：界面会显示加密指纹，演示或真实使用时可由两端人工比对，降低中间人攻击风险。
+- 群组模式：群组端到端加密不引入中心服务或共享群密钥，发送方复用每个成员已协商的一对一 E2EE 会话，分别加密同一条 `GroupMessagePayload`。
+- 加密补发：加密群组消息的待投递记录会设置 `RequiresEncryption=1`。成员离线或尚未完成协商时，发送方只保存待补发记录并发起协商；补发时若密钥仍未就绪，不会降级为明文发送。
+- 本地存储边界：聊天历史和待补发队列仍保存在本机 SQLite，当前加密保护的是局域网传输过程，不是本地数据库静态加密。
 
 ## 群组与多人会话
 - 群组不依赖中心服务器，创建方维护成员列表，发送 `GroupMessage` 时按成员逐个 TCP 点对点发送。
@@ -54,7 +57,8 @@
 - 群组文件请求会在 `FileTransferRequest` 中追加可选元数据：`GroupId`、`GroupName`、`GroupKind`、`GroupMemberUserIds`、`GroupMessageId`。旧客户端缺少这些字段时会继续按普通文件请求处理。
 - 群组离线补发使用发送方本地 SQLite `OutgoingDeliveries` 队列：离线成员或发送失败的成员会保留 `GroupMessagePayload` 或 `FileTransferRequest`，对方重新上线后自动补发，成功后删除队列记录。
 - 群组附件补发会额外保存发送方本地 `SourcePath`。如果源文件已删除或移动，队列会保留并记录失败原因，不会静默丢弃。
-- 群组加密后续扩展。
+- 群组文本端到端加密使用逐成员加密策略：开启后，在线且已完成一对一 E2EE 协商的成员立即收到加密 `GroupMessage`；离线或未协商成员进入 `OutgoingDeliveries` 队列并标记 `RequiresEncryption`。
+- 后续若需要更接近成熟 IM 的群组加密，可在此基础上增加群密钥 epoch、成员变更轮换和附件内容加密。
 
 ## 文件传输
 - 文件请求通过 TCP 消息端口发送 `FileTransferRequest`。

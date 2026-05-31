@@ -14,6 +14,8 @@ public sealed class OutgoingDeliveryRecord
 
     public string? SourcePath { get; init; }
 
+    public bool RequiresEncryption { get; init; }
+
     public DateTimeOffset CreatedTime { get; init; } = DateTimeOffset.Now;
 
     public DateTimeOffset? LastAttemptTime { get; init; }

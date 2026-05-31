@@ -22,15 +22,16 @@ public sealed class OutgoingDeliveryRepository
         command.CommandText =
             """
             INSERT OR REPLACE INTO OutgoingDeliveries
-                (DeliveryId, RecipientId, PacketType, PayloadJson, SourcePath, CreatedTime, LastAttemptTime, AttemptCount, LastError)
+                (DeliveryId, RecipientId, PacketType, PayloadJson, SourcePath, RequiresEncryption, CreatedTime, LastAttemptTime, AttemptCount, LastError)
             VALUES
-                ($deliveryId, $recipientId, $packetType, $payloadJson, $sourcePath, $createdTime, $lastAttemptTime, $attemptCount, $lastError);
+                ($deliveryId, $recipientId, $packetType, $payloadJson, $sourcePath, $requiresEncryption, $createdTime, $lastAttemptTime, $attemptCount, $lastError);
             """;
         command.Parameters.AddWithValue("$deliveryId", record.DeliveryId);
         command.Parameters.AddWithValue("$recipientId", record.RecipientId);
         command.Parameters.AddWithValue("$packetType", record.PacketType.ToString());
         command.Parameters.AddWithValue("$payloadJson", record.PayloadJson);
         command.Parameters.AddWithValue("$sourcePath", (object?)record.SourcePath ?? DBNull.Value);
+        command.Parameters.AddWithValue("$requiresEncryption", record.RequiresEncryption ? 1 : 0);
         command.Parameters.AddWithValue("$createdTime", record.CreatedTime.ToString("O"));
         command.Parameters.AddWithValue("$lastAttemptTime", record.LastAttemptTime?.ToString("O") ?? (object)DBNull.Value);
         command.Parameters.AddWithValue("$attemptCount", record.AttemptCount);
@@ -50,7 +51,7 @@ public sealed class OutgoingDeliveryRepository
         await using var command = connection.CreateCommand();
         command.CommandText =
             """
-            SELECT DeliveryId, RecipientId, PacketType, PayloadJson, SourcePath, CreatedTime, LastAttemptTime, AttemptCount, LastError
+            SELECT DeliveryId, RecipientId, PacketType, PayloadJson, SourcePath, RequiresEncryption, CreatedTime, LastAttemptTime, AttemptCount, LastError
             FROM OutgoingDeliveries
             WHERE RecipientId = $recipientId
             ORDER BY CreatedTime
@@ -71,10 +72,11 @@ public sealed class OutgoingDeliveryRepository
                 PacketType = Enum.Parse<PacketType>(reader.GetString(2)),
                 PayloadJson = reader.GetString(3),
                 SourcePath = reader.IsDBNull(4) ? null : reader.GetString(4),
-                CreatedTime = DateTimeOffset.Parse(reader.GetString(5)),
-                LastAttemptTime = reader.IsDBNull(6) ? null : DateTimeOffset.Parse(reader.GetString(6)),
-                AttemptCount = reader.GetInt32(7),
-                LastError = reader.IsDBNull(8) ? null : reader.GetString(8)
+                RequiresEncryption = reader.GetInt32(5) == 1,
+                CreatedTime = DateTimeOffset.Parse(reader.GetString(6)),
+                LastAttemptTime = reader.IsDBNull(7) ? null : DateTimeOffset.Parse(reader.GetString(7)),
+                AttemptCount = reader.GetInt32(8),
+                LastError = reader.IsDBNull(9) ? null : reader.GetString(9)
             });
         }
 

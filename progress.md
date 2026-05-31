@@ -565,3 +565,20 @@
   - `dotnet build LanTalk.sln -v:minimal`：0 警告，0 错误。
   - 初次 `dotnet test LanTalk.sln -v:minimal` 失败：新增 SQLite 迁移测试在 Windows 上未释放验证连接就删除临时库。
   - 收紧测试连接作用域后，`dotnet test LanTalk.sln -v:minimal`：49 个测试全部通过。
+
+### 阶段 19：群组端到端加密
+- **状态：** 已完成并验证通过。
+- 设计结论：
+  - 当前阶段采用逐成员端到端加密，不引入中心服务、共享群密钥或复杂 epoch 轮换。
+  - 群组会话开启加密后，发送方复用每个成员已协商的一对一 E2EE 会话，分别加密同一条 `GroupMessagePayload`。
+  - 成员离线或尚未完成协商时，消息进入 `OutgoingDeliveries`，并标记 `RequiresEncryption`，补发时不会降级为明文。
+  - 当前保护范围是群组文本的网络传输；本地 SQLite 历史/待补发队列和图片/文件内容仍按现有协议处理。
+- 已执行操作：
+  - `MessageService` 支持加密 `GroupMessage`，接收端复用已有 AES-GCM 解密路径。
+  - 主窗口群组会话启用端到端加密开关，开启时自动向在线成员发起一对一加密协商。
+  - 群组发送链路按成员判断加密状态：已就绪成员立即加密发送，未就绪/离线成员进入加密补发队列。
+  - `OutgoingDeliveryRecord`、`OutgoingDeliveries` 和仓储新增 `RequiresEncryption`，旧数据库通过轻量迁移补齐字段。
+  - 加密会话完成后自动触发对应成员的待补发队列重试。
+- 验证结果：
+  - `dotnet build LanTalk.sln -v:minimal`：0 警告，0 错误。
+  - `dotnet test LanTalk.sln -v:minimal`：51 个测试全部通过。

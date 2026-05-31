@@ -62,7 +62,7 @@ public sealed class DatabaseInitializerTests
     }
 
     [Fact]
-    public async Task InitializeAsync_ShouldMigrateOutgoingDeliveriesSourcePathColumn()
+    public async Task InitializeAsync_ShouldMigrateOutgoingDeliveriesOfflineQueueColumns()
     {
         var databasePath = Path.Combine(Path.GetTempPath(), $"lantalk-migrate-delivery-{Guid.NewGuid():N}.db");
         var factory = new SqliteConnectionFactory(databasePath);
@@ -91,6 +91,7 @@ public sealed class DatabaseInitializerTests
         await initializer.InitializeAsync();
 
         var hasSourcePath = false;
+        var hasRequiresEncryption = false;
         await using (var verifyConnection = factory.CreateConnection())
         {
             await verifyConnection.OpenAsync();
@@ -101,10 +102,12 @@ public sealed class DatabaseInitializerTests
             while (await reader.ReadAsync())
             {
                 hasSourcePath |= string.Equals(reader.GetString(1), "SourcePath", StringComparison.OrdinalIgnoreCase);
+                hasRequiresEncryption |= string.Equals(reader.GetString(1), "RequiresEncryption", StringComparison.OrdinalIgnoreCase);
             }
         }
 
         Assert.True(hasSourcePath);
+        Assert.True(hasRequiresEncryption);
         SqliteConnection.ClearAllPools();
         File.Delete(databasePath);
     }

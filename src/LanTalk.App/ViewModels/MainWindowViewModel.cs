@@ -49,6 +49,7 @@ public sealed partial class MainWindowViewModel : ViewModelBase
     private readonly Dictionary<string, string> _incomingSavePaths = new(StringComparer.Ordinal);
     private readonly HashSet<string> _incomingFinishedNotifications = new(StringComparer.Ordinal);
     private readonly HashSet<string> _retryingDeliveryRecipients = new(StringComparer.Ordinal);
+    private readonly HashSet<string> _encryptedGroupSessions = new(StringComparer.Ordinal);
     private int _previewImagePixelWidth;
     private int _previewImagePixelHeight;
     private CancellationTokenSource? _messageSearchCts;
@@ -279,9 +280,15 @@ public sealed partial class MainWindowViewModel : ViewModelBase
 
     private async Task SetConversationEncryptionAsync(bool isEnabled)
     {
-        if (SelectedUser is null || SelectedUser.UserId == NetworkConstants.BroadcastSessionId || SelectedUser.IsGroupSession)
+        if (SelectedUser is null || SelectedUser.UserId == NetworkConstants.BroadcastSessionId)
         {
             RefreshConversationEncryptionState();
+            return;
+        }
+
+        if (SelectedUser.IsGroupSession)
+        {
+            await SetGroupConversationEncryptionAsync(SelectedUser, isEnabled);
             return;
         }
 
@@ -314,17 +321,84 @@ public sealed partial class MainWindowViewModel : ViewModelBase
         }
     }
 
+    private async Task SetGroupConversationEncryptionAsync(OnlineUserViewModel group, bool isEnabled)
+    {
+        try
+        {
+            if (isEnabled)
+            {
+                _encryptedGroupSessions.Add(group.UserId);
+                var started = await EnsureGroupMemberEncryptionAsync(group);
+                StatusMessage = started == 0
+                    ? "已启用群组端到端加密，群消息将按成员逐一加密发送。"
+                    : $"已启用群组端到端加密，并向 {started} 个成员发起一对一加密协商。";
+            }
+            else
+            {
+                _encryptedGroupSessions.Remove(group.UserId);
+                StatusMessage = "已关闭该群组的端到端加密，后续群消息将按普通群组消息发送。";
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.Error(isEnabled ? "启用群组端到端加密失败。" : "关闭群组端到端加密失败。", ex);
+            StatusMessage = isEnabled
+                ? $"启用群组端到端加密失败：{ex.Message}"
+                : $"关闭群组端到端加密失败：{ex.Message}";
+        }
+        finally
+        {
+            RefreshConversationEncryptionState();
+            UpdateCurrentSessionHeader();
+        }
+    }
+
+    private async Task<int> EnsureGroupMemberEncryptionAsync(OnlineUserViewModel group)
+    {
+        var started = 0;
+        foreach (var receiver in ResolveGroupReceivers(group).Where(user => user.Status == UserStatus.Online))
+        {
+            var state = _messageService.GetEncryptionState(receiver.UserId);
+            if (state.IsEnabled || state.IsPending)
+            {
+                continue;
+            }
+
+            try
+            {
+                await _messageService.EnableEncryptionAsync(_settings, receiver);
+                started++;
+            }
+            catch (Exception ex)
+            {
+                _logger.Warning($"向群组成员 {receiver.Nickname} 发起端到端加密协商失败：{ex.Message}");
+            }
+        }
+
+        return started;
+    }
+
     private void OnEncryptionStateChanged(object? sender, ConversationEncryptionStateChangedEventArgs e)
     {
         Dispatcher.UIThread.Post(() =>
         {
-            if (SelectedUser?.UserId == e.State.UserId)
+            if (SelectedUser?.UserId == e.State.UserId ||
+                (SelectedUser?.IsGroupSession == true && SelectedUser.GroupMemberIds.Contains(e.State.UserId, StringComparer.Ordinal)))
             {
                 RefreshConversationEncryptionState();
                 UpdateCurrentSessionHeader();
             }
 
             StatusMessage = e.State.StatusText;
+
+            if (e.State.IsEnabled)
+            {
+                var user = OnlineUsers.FirstOrDefault(item => item.UserId == e.State.UserId && item.Status == UserStatus.Online);
+                if (user is not null)
+                {
+                    _ = RetryPendingDeliveriesAsync(user);
+                }
+            }
         });
     }
 
@@ -332,7 +406,8 @@ public sealed partial class MainWindowViewModel : ViewModelBase
     {
         Dispatcher.UIThread.Post(() =>
         {
-            if (SelectedUser?.UserId == e.PeerUserId)
+            if (SelectedUser?.UserId == e.PeerUserId ||
+                (SelectedUser?.IsGroupSession == true && SelectedUser.GroupMemberIds.Contains(e.PeerUserId, StringComparer.Ordinal)))
             {
                 RefreshConversationEncryptionState();
                 UpdateCurrentSessionHeader();
@@ -358,7 +433,12 @@ public sealed partial class MainWindowViewModel : ViewModelBase
 
         if (SelectedUser.IsGroupSession)
         {
-            ApplyConversationEncryptionState(false, false, "群组暂不支持端到端加密", "群组消息会点对点发送给当前在线成员。");
+            var isEnabled = _encryptedGroupSessions.Contains(SelectedUser.UserId);
+            ApplyConversationEncryptionState(
+                true,
+                isEnabled,
+                isEnabled ? "群组端到端加密已启用 · 逐成员加密" : "群组端到端加密未启用",
+                DescribeGroupEncryptionReadiness(SelectedUser, isEnabled));
             return;
         }
 
@@ -367,6 +447,27 @@ public sealed partial class MainWindowViewModel : ViewModelBase
             ? "开启后会使用临时 ECDH 密钥协商与 AES-GCM 加密私聊文本。"
             : $"请与对方比对加密指纹：{state.Fingerprint}";
         ApplyConversationEncryptionState(true, state.IsEnabled || state.IsPending, state.StatusText, tip);
+    }
+
+    private string DescribeGroupEncryptionReadiness(OnlineUserViewModel group, bool isEnabled)
+    {
+        var receivers = ResolveGroupReceivers(group).ToArray();
+        if (receivers.Length == 0)
+        {
+            return "群组没有其他成员，暂时无需加密发送。";
+        }
+
+        var onlineReceivers = receivers.Where(user => user.Status == UserStatus.Online).ToArray();
+        var readyCount = onlineReceivers.Count(user => _messageService.GetEncryptionState(user.UserId).IsEnabled);
+        var pendingCount = onlineReceivers.Count(user => _messageService.GetEncryptionState(user.UserId).IsPending);
+        var offlineCount = receivers.Length - onlineReceivers.Length;
+
+        if (!isEnabled)
+        {
+            return "开启后会复用一对一端到端会话逐成员加密群文本；未协商或离线成员会进入加密补发队列。";
+        }
+
+        return $"在线成员 {onlineReceivers.Length} 人，已加密 {readyCount} 人，协商中 {pendingCount} 人，离线 {offlineCount} 人。图片和文件仍使用当前附件传输协议。";
     }
 
     private void ApplyConversationEncryptionState(bool canToggle, bool isChecked, string status, string fingerprintTip)
@@ -472,9 +573,10 @@ public sealed partial class MainWindowViewModel : ViewModelBase
                     LocalNickname,
                     content);
                 var result = await SendGroupMessageWithOfflineQueueAsync(SelectedUser, payload);
+                var groupPrefix = result.IsEncrypted ? "群组加密消息" : "群组消息";
                 StatusMessage = result.QueuedCount == 0 && result.FailureCount == 0
-                    ? $"群组消息已发送给 {result.SuccessCount} 个在线成员。"
-                    : $"群组消息已发送 {result.SuccessCount} 人，离线补发 {result.QueuedCount} 人，失败 {result.FailureCount} 人。";
+                    ? $"{groupPrefix}已发送给 {result.SuccessCount} 个在线成员。"
+                    : $"{groupPrefix}已发送 {result.SuccessCount} 人，待补发 {result.QueuedCount} 人，失败 {result.FailureCount} 人。";
             }
             else if (kind == MessageKind.Broadcast)
             {
@@ -2022,6 +2124,7 @@ public sealed partial class MainWindowViewModel : ViewModelBase
             .Where(user => user.Status == UserStatus.Online)
             .ToDictionary(user => user.UserId, StringComparer.Ordinal);
         var payloadJson = JsonSerializer.Serialize(payload, LanTalkJsonContext.Default.GroupMessagePayload);
+        var requiresEncryption = _encryptedGroupSessions.Contains(group.UserId);
         var success = 0;
         var queued = 0;
         var failure = 0;
@@ -2030,20 +2133,33 @@ public sealed partial class MainWindowViewModel : ViewModelBase
         {
             if (!onlineReceivers.TryGetValue(memberId, out var receiver))
             {
-                await QueueGroupMessageDeliveryAsync(memberId, payload, payloadJson, "成员当前离线，等待重新上线后补发。", cancellationToken);
+                await QueueGroupMessageDeliveryAsync(
+                    memberId,
+                    payload,
+                    payloadJson,
+                    requiresEncryption,
+                    requiresEncryption ? "成员当前离线，等待重新上线并完成加密协商后补发。" : "成员当前离线，等待重新上线后补发。",
+                    cancellationToken);
+                queued++;
+                continue;
+            }
+
+            if (requiresEncryption && !_messageService.GetEncryptionState(receiver.UserId).IsEnabled)
+            {
+                await QueueEncryptedGroupMessageUntilReadyAsync(receiver, payload, payloadJson, cancellationToken);
                 queued++;
                 continue;
             }
 
             try
             {
-                await _messageService.SendGroupMessageToAsync(_settings, receiver, payload, cancellationToken);
+                await _messageService.SendGroupMessageToAsync(_settings, receiver, payload, requiresEncryption, cancellationToken);
                 success++;
             }
             catch (Exception ex)
             {
                 _logger.Warning($"群组消息发送给 {receiver.Nickname}({receiver.IpAddress}) 失败，已加入离线补发队列：{ex.Message}");
-                await QueueGroupMessageDeliveryAsync(memberId, payload, payloadJson, ex.Message, cancellationToken);
+                await QueueGroupMessageDeliveryAsync(memberId, payload, payloadJson, requiresEncryption, ex.Message, cancellationToken);
                 queued++;
             }
         }
@@ -2053,13 +2169,42 @@ public sealed partial class MainWindowViewModel : ViewModelBase
             failure = 1;
         }
 
-        return new GroupQueuedSendResult(success, queued, failure);
+        return new GroupQueuedSendResult(success, queued, failure, requiresEncryption);
+    }
+
+    private async Task QueueEncryptedGroupMessageUntilReadyAsync(
+        UserInfo receiver,
+        GroupMessagePayload payload,
+        string payloadJson,
+        CancellationToken cancellationToken)
+    {
+        var state = _messageService.GetEncryptionState(receiver.UserId);
+        if (!state.IsPending)
+        {
+            try
+            {
+                await _messageService.EnableEncryptionAsync(_settings, receiver, cancellationToken);
+            }
+            catch (Exception ex)
+            {
+                _logger.Warning($"向群组成员 {receiver.Nickname} 发起端到端加密协商失败：{ex.Message}");
+            }
+        }
+
+        await QueueGroupMessageDeliveryAsync(
+            receiver.UserId,
+            payload,
+            payloadJson,
+            requiresEncryption: true,
+            "等待与该成员完成端到端加密协商后补发。",
+            cancellationToken);
     }
 
     private Task QueueGroupMessageDeliveryAsync(
         string recipientId,
         GroupMessagePayload payload,
         string payloadJson,
+        bool requiresEncryption,
         string reason,
         CancellationToken cancellationToken = default)
     {
@@ -2069,6 +2214,7 @@ public sealed partial class MainWindowViewModel : ViewModelBase
             RecipientId = recipientId,
             PacketType = PacketType.GroupMessage,
             PayloadJson = payloadJson,
+            RequiresEncryption = requiresEncryption,
             CreatedTime = DateTimeOffset.Now,
             LastError = reason
         }, cancellationToken);
@@ -2145,11 +2291,34 @@ public sealed partial class MainWindowViewModel : ViewModelBase
             return;
         }
 
+        if (record.RequiresEncryption && !_messageService.GetEncryptionState(receiver.UserId).IsEnabled)
+        {
+            var state = _messageService.GetEncryptionState(receiver.UserId);
+            if (!state.IsPending)
+            {
+                try
+                {
+                    await _messageService.EnableEncryptionAsync(_settings, receiver);
+                }
+                catch (Exception ex)
+                {
+                    _logger.Warning($"补发加密群组消息前发起加密协商失败：{ex.Message}");
+                }
+            }
+
+            var reason = "等待端到端加密协商完成后补发。";
+            await _outgoingDeliveryRepository.MarkAttemptAsync(record.DeliveryId, record.AttemptCount + 1, reason);
+            StatusMessage = $"{receiver.Nickname} 的群组加密消息已保留在补发队列。";
+            return;
+        }
+
         try
         {
-            await _messageService.SendGroupMessageToAsync(_settings, receiver, payload);
+            await _messageService.SendGroupMessageToAsync(_settings, receiver, payload, record.RequiresEncryption);
             await _outgoingDeliveryRepository.DeleteAsync(record.DeliveryId);
-            StatusMessage = $"已向 {receiver.Nickname} 补发群组“{payload.GroupName}”的离线消息。";
+            StatusMessage = record.RequiresEncryption
+                ? $"已向 {receiver.Nickname} 加密补发群组“{payload.GroupName}”的离线消息。"
+                : $"已向 {receiver.Nickname} 补发群组“{payload.GroupName}”的离线消息。";
         }
         catch (Exception ex)
         {
@@ -2874,7 +3043,7 @@ public sealed partial class MainWindowViewModel : ViewModelBase
         return $"{size:0.##} {units[unitIndex]}";
     }
 
-    private sealed record GroupQueuedSendResult(int SuccessCount, int QueuedCount, int FailureCount);
+    private sealed record GroupQueuedSendResult(int SuccessCount, int QueuedCount, int FailureCount, bool IsEncrypted);
 
     private sealed class GroupFileTransferState
     {
