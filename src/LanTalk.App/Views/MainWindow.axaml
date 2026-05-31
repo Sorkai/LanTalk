@@ -202,7 +202,12 @@
                     </Grid>
                 </Border>
 
-                <ScrollViewer Grid.Row="1" Padding="20">
+                <ScrollViewer x:Name="MessagesScrollViewer"
+                              Grid.Row="1"
+                              Padding="20"
+                              ClipToBounds="True"
+                              HorizontalScrollBarVisibility="Disabled"
+                              VerticalScrollBarVisibility="Auto">
                     <ItemsControl ItemsSource="{Binding Messages}">
                         <ItemsControl.ItemTemplate>
                             <DataTemplate x:DataType="vm:ChatMessageViewModel">
