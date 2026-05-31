@@ -26,4 +26,28 @@ public sealed class ChatHistoryService
     {
         return _messageRepository.SearchMessagesAsync(sessionId, query, cancellationToken: cancellationToken);
     }
+
+    public Task<IReadOnlyList<ChatMessage>> MarkSessionIncomingMessagesReadAsync(
+        string sessionId,
+        DateTimeOffset readTime,
+        CancellationToken cancellationToken = default)
+    {
+        return _messageRepository.MarkSessionIncomingMessagesReadAsync(sessionId, readTime, cancellationToken);
+    }
+
+    public Task<(int ReadByCount, int ReadTargetCount, bool IsRead)> MarkMessageReadByAsync(
+        MessageReadReceiptPayload receipt,
+        CancellationToken cancellationToken = default)
+    {
+        return _messageRepository.MarkMessageReadByAsync(receipt, cancellationToken);
+    }
+
+    public Task RecallMessageAsync(
+        string sessionId,
+        string messageId,
+        DateTimeOffset recalledTime,
+        CancellationToken cancellationToken = default)
+    {
+        return _messageRepository.RecallMessageAsync(sessionId, messageId, recalledTime, cancellationToken);
+    }
 }

@@ -269,6 +269,7 @@ public sealed partial class MainWindowViewModel : ViewModelBase
         RefreshUnreadState();
         UpsertRecentSession(value, moveToTop: true);
         _ = LoadSessionMessagesAsync(value);
+        _ = MarkSessionMessagesReadAsync(value);
     }
 
     partial void OnIsConversationEncryptionEnabledChanged(bool value)
@@ -543,7 +544,8 @@ public sealed partial class MainWindowViewModel : ViewModelBase
             Kind = kind,
             Content = content,
             SendTime = DateTimeOffset.Now,
-            IsMine = true
+            IsMine = true,
+            ReadTargetCount = GetReadTargetCount(SelectedUser, kind)
         };
 
         DraftMessage = string.Empty;
@@ -961,6 +963,56 @@ public sealed partial class MainWindowViewModel : ViewModelBase
     }
 
     [RelayCommand]
+    private async Task RecallMessageAsync(ChatMessageViewModel? message)
+    {
+        if (message is null || !message.CanRecall)
+        {
+            StatusMessage = "只能撤回自己发送的文本或图片消息。";
+            return;
+        }
+
+        var session = RecentSessions.FirstOrDefault(item => item.UserId == message.SessionId)
+            ?? SelectedUser;
+        if (session is null)
+        {
+            StatusMessage = "未找到消息所在会话，无法撤回。";
+            return;
+        }
+
+        var recallTime = DateTimeOffset.Now;
+        await _chatHistoryService.RecallMessageAsync(message.SessionId, message.MessageId, recallTime);
+        MarkMessageRecalled(message, isMine: true);
+
+        var payload = new MessageRecallPayload(
+            message.MessageId,
+            message.SessionId,
+            _settings.UserId,
+            LocalNickname,
+            session.IsGroupSession,
+            recallTime);
+
+        if (session.IsGroupSession)
+        {
+            foreach (var memberId in session.GroupMemberIds.Where(id => id != _settings.UserId).Distinct(StringComparer.Ordinal))
+            {
+                await SendRecallToRecipientAsync(memberId, payload);
+            }
+
+            StatusMessage = $"已撤回群组“{session.Nickname}”中的一条消息。";
+            UpsertRecentSession(session, "你撤回了一条消息", moveToTop: true);
+            return;
+        }
+
+        if (!string.IsNullOrWhiteSpace(message.ReceiverId))
+        {
+            await SendRecallToRecipientAsync(message.ReceiverId, payload);
+        }
+
+        StatusMessage = "已撤回一条消息。";
+        UpsertRecentSession(session, "你撤回了一条消息", moveToTop: true);
+    }
+
+    [RelayCommand]
     private async Task RefreshDiscoveryAsync()
     {
         try
@@ -1077,6 +1129,10 @@ public sealed partial class MainWindowViewModel : ViewModelBase
         var request = new FileTransferRequest(fileId, fileInfo.Name, fileInfo.Length, _settings.UserId, receiver.UserId, _settings.FilePort, isImage);
         var fileMessage = new ChatMessageViewModel
         {
+            MessageId = fileId,
+            SessionId = receiver.UserId,
+            SenderId = _settings.UserId,
+            ReceiverId = receiver.UserId,
             SenderName = LocalNickname,
             Content = isImage ? string.Empty : "等待接收方确认文件请求。",
             TimeText = DateTimeOffset.Now.ToString("HH:mm"),
@@ -1095,7 +1151,7 @@ public sealed partial class MainWindowViewModel : ViewModelBase
 
         if (_settings.SaveChatHistory && isImage)
         {
-            await _chatHistoryService.SaveMessageAsync(CreateImageChatMessage(fileId, receiver.UserId, fileInfo, selectedPath, isMine: true));
+            await _chatHistoryService.SaveMessageAsync(CreateImageChatMessage(fileId, receiver.UserId, fileInfo, selectedPath, isMine: true, readTargetCount: 1));
         }
 
         if (IsMessageSearchActive() && isImage)
@@ -1124,6 +1180,15 @@ public sealed partial class MainWindowViewModel : ViewModelBase
             TransferTime = DateTimeOffset.Now
         });
 
+        if (receiver.Status != UserStatus.Online)
+        {
+            await QueueFileDeliveryAsync(receiver.UserId, request, selectedPath, "对方当前离线，等待重新上线后提醒。");
+            fileMessage.StatusText = "对方离线，等待上线提醒";
+            await SaveOutgoingFileStatusAsync(fileId, FileTransferStatus.OfflineQueued);
+            StatusMessage = $"{(isImage ? "图片" : "文件")}已加入离线提醒队列：{fileInfo.Name}";
+            return;
+        }
+
         try
         {
             await _messageService.SendFileRequestAsync(_settings, receiver, request);
@@ -1135,8 +1200,10 @@ public sealed partial class MainWindowViewModel : ViewModelBase
         catch (Exception ex)
         {
             _logger.Error(isImage ? "图片请求发送失败。" : "文件请求发送失败。", ex);
-            fileMessage.StatusText = "发送请求失败";
-            StatusMessage = isImage ? $"图片请求发送失败：{ex.Message}" : $"文件请求发送失败：{ex.Message}";
+            await QueueFileDeliveryAsync(receiver.UserId, request, selectedPath, ex.Message);
+            fileMessage.StatusText = "发送失败，等待上线提醒";
+            await SaveOutgoingFileStatusAsync(fileId, FileTransferStatus.OfflineQueued);
+            StatusMessage = isImage ? $"图片请求发送失败，已加入离线提醒队列：{ex.Message}" : $"文件请求发送失败，已加入离线提醒队列：{ex.Message}";
         }
     }
 
@@ -1209,6 +1276,10 @@ public sealed partial class MainWindowViewModel : ViewModelBase
         var totalSize = files.Sum(item => item.FileSize);
         var displayName = BuildBatchDisplayName(transferKind, batchName, files.Length);
         var fileMessage = CreateBatchMessage(displayName, transferKind, files.Length, totalSize, isMine: true);
+        fileMessage.MessageId = batchId;
+        fileMessage.SessionId = receiver.UserId;
+        fileMessage.SenderId = _settings.UserId;
+        fileMessage.ReceiverId = receiver.UserId;
         var state = new FileBatchTransferState(fileMessage, files.Length, totalSize, transferKind, isSender: true);
 
         Messages.Add(fileMessage);
@@ -1240,6 +1311,16 @@ public sealed partial class MainWindowViewModel : ViewModelBase
             BatchName: displayName,
             Items: fileItems);
 
+        var sourceMap = BuildSourceMap(localItems);
+        if (receiver.Status != UserStatus.Online)
+        {
+            await QueueFileDeliveryAsync(receiver.UserId, request, sourceMap, "对方当前离线，等待重新上线后提醒。");
+            fileMessage.StatusText = "对方离线，等待上线提醒";
+            await SaveBatchRecordAsync(batchId, receiver.UserId, displayName, totalSize, transferKind, batchId, null, FileTransferStatus.OfflineQueued);
+            StatusMessage = $"{GetTransferKindText(transferKind)}已加入离线提醒队列：{displayName}";
+            return;
+        }
+
         try
         {
             await _messageService.SendFileRequestAsync(_settings, receiver, request);
@@ -1249,9 +1330,10 @@ public sealed partial class MainWindowViewModel : ViewModelBase
         catch (Exception ex)
         {
             _logger.Error($"{GetTransferKindText(transferKind)}请求发送失败。", ex);
-            fileMessage.StatusText = "发送请求失败";
-            await SaveBatchRecordAsync(batchId, receiver.UserId, displayName, totalSize, transferKind, batchId, null, FileTransferStatus.Failed);
-            StatusMessage = $"{GetTransferKindText(transferKind)}请求发送失败：{ex.Message}";
+            await QueueFileDeliveryAsync(receiver.UserId, request, sourceMap, ex.Message);
+            fileMessage.StatusText = "发送失败，等待上线提醒";
+            await SaveBatchRecordAsync(batchId, receiver.UserId, displayName, totalSize, transferKind, batchId, null, FileTransferStatus.OfflineQueued);
+            StatusMessage = $"{GetTransferKindText(transferKind)}请求发送失败，已加入离线提醒队列：{ex.Message}";
         }
     }
 
@@ -1280,7 +1362,12 @@ public sealed partial class MainWindowViewModel : ViewModelBase
         var totalFileDeliveries = files.Length * recipientIds.Length;
         var totalBytes = totalSize * recipientIds.Length;
         var displayName = BuildBatchDisplayName(transferKind, batchName, files.Length);
+        var groupMessageId = Guid.NewGuid().ToString("N");
         var fileMessage = CreateBatchMessage(displayName, transferKind, files.Length, totalSize, isMine: true);
+        fileMessage.MessageId = groupMessageId;
+        fileMessage.SessionId = group.UserId;
+        fileMessage.SenderId = _settings.UserId;
+        fileMessage.ReceiverId = group.UserId;
         fileMessage.StatusText = $"准备发送给 {recipientIds.Length} 个成员";
         var state = new FileBatchTransferState(fileMessage, totalFileDeliveries, totalBytes, transferKind, isSender: true);
 
@@ -1293,7 +1380,6 @@ public sealed partial class MainWindowViewModel : ViewModelBase
         var success = 0;
         var queued = 0;
         var failed = 0;
-        var groupMessageId = Guid.NewGuid().ToString("N");
 
         foreach (var recipientId in recipientIds)
         {
@@ -1382,6 +1468,10 @@ public sealed partial class MainWindowViewModel : ViewModelBase
         var groupMessageId = Guid.NewGuid().ToString("N");
         var fileMessage = new ChatMessageViewModel
         {
+            MessageId = groupMessageId,
+            SessionId = group.UserId,
+            SenderId = _settings.UserId,
+            ReceiverId = group.UserId,
             SenderName = LocalNickname,
             Content = isImage ? string.Empty : $"群组文件：{fileInfo.Name}",
             TimeText = DateTimeOffset.Now.ToString("HH:mm"),
@@ -1407,7 +1497,8 @@ public sealed partial class MainWindowViewModel : ViewModelBase
                 selectedPath,
                 isMine: true,
                 sessionId: group.UserId,
-                receiverId: group.UserId));
+                receiverId: group.UserId,
+                readTargetCount: recipientIds.Length));
         }
 
         if (IsMessageSearchActive() && isImage)
@@ -1683,6 +1774,24 @@ public sealed partial class MainWindowViewModel : ViewModelBase
             return;
         }
 
+        if (packet.Type is PacketType.MessageReadReceipt)
+        {
+            await HandleReadReceiptAsync(packet);
+            return;
+        }
+
+        if (packet.Type is PacketType.MessageRecall)
+        {
+            await HandleMessageRecallAsync(packet);
+            return;
+        }
+
+        if (packet.Type is PacketType.OfflineFileReminder)
+        {
+            await HandleOfflineFileReminderAsync(packet);
+            return;
+        }
+
         if (packet.Type == PacketType.GroupMessage)
         {
             await HandleGroupMessageAsync(packet);
@@ -1741,6 +1850,11 @@ public sealed partial class MainWindowViewModel : ViewModelBase
         {
             session.UnreadCount++;
             RefreshUnreadState();
+        }
+
+        if (isCurrentSession && kind == MessageKind.Private)
+        {
+            await MarkIncomingMessageReadAsync(message, isGroup: false);
         }
 
         UpsertRecentSession(session, payload.Content, moveToTop: true);
@@ -1816,6 +1930,11 @@ public sealed partial class MainWindowViewModel : ViewModelBase
         {
             session.UnreadCount++;
             RefreshUnreadState();
+        }
+
+        if (SelectedUser?.UserId == payload.GroupId)
+        {
+            await MarkIncomingMessageReadAsync(message, isGroup: true);
         }
 
         UpsertRecentSession(session, $"{senderName}: {payload.Content}", moveToTop: true);
@@ -1901,6 +2020,10 @@ public sealed partial class MainWindowViewModel : ViewModelBase
 
         var fileMessage = new ChatMessageViewModel
         {
+            MessageId = request.FileId,
+            SessionId = session.UserId,
+            SenderId = request.SenderId,
+            ReceiverId = request.GroupId ?? _settings.UserId,
             SenderName = sender,
             Content = isImage ? string.Empty : request.IsGroupTransfer ? $"群组文件：{request.FileName}" : "收到文件发送请求，请确认是否接收。",
             TimeText = DateTimeOffset.Now.ToString("HH:mm"),
@@ -2022,6 +2145,10 @@ public sealed partial class MainWindowViewModel : ViewModelBase
             saveRoot);
 
         var fileMessage = CreateBatchMessage(displayName, request.TransferKind, fileItems.Length, totalSize, isMine: false, sender);
+        fileMessage.MessageId = request.FileId;
+        fileMessage.SessionId = session.UserId;
+        fileMessage.SenderId = request.SenderId;
+        fileMessage.ReceiverId = request.GroupId ?? _settings.UserId;
         var state = new FileBatchTransferState(fileMessage, fileItems.Length, totalSize, request.TransferKind, isSender: false);
 
         if (SelectedUser?.UserId == session.UserId)
@@ -2508,6 +2635,115 @@ public sealed partial class MainWindowViewModel : ViewModelBase
         StatusMessage = $"收到来自 {ResolveUserName(packet.FromUserId)} 的错误：{error.Message}";
     }
 
+    private async Task HandleReadReceiptAsync(NetworkPacket packet)
+    {
+        var receipt = JsonSerializer.Deserialize(packet.PayloadJson, LanTalkJsonContext.Default.MessageReadReceiptPayload);
+        if (receipt is null)
+        {
+            return;
+        }
+
+        var result = await _chatHistoryService.MarkMessageReadByAsync(receipt);
+        var message = Messages.FirstOrDefault(item => item.MessageId == receipt.MessageId);
+        if (message is not null)
+        {
+            message.ReadByCount = result.ReadByCount;
+            message.ReadTargetCount = result.ReadTargetCount;
+            message.IsRead = result.IsRead;
+        }
+
+        StatusMessage = receipt.IsGroup
+            ? $"{receipt.ReaderNickname} 已读群组消息。"
+            : $"{receipt.ReaderNickname} 已读你的消息。";
+    }
+
+    private async Task HandleMessageRecallAsync(NetworkPacket packet)
+    {
+        var recall = JsonSerializer.Deserialize(packet.PayloadJson, LanTalkJsonContext.Default.MessageRecallPayload);
+        if (recall is null)
+        {
+            return;
+        }
+
+        await _chatHistoryService.RecallMessageAsync(recall.SessionId, recall.MessageId, recall.RecallTime);
+        if (Messages.FirstOrDefault(item => item.MessageId == recall.MessageId) is { } message)
+        {
+            MarkMessageRecalled(message, isMine: false);
+        }
+
+        var session = recall.IsGroup
+            ? RecentSessions.FirstOrDefault(item => item.UserId == recall.SessionId)
+            : EnsureUserSession(packet.FromUserId, recall.SenderNickname, "0.0.0.0");
+        if (session is not null)
+        {
+            UpsertRecentSession(session, $"{recall.SenderNickname} 撤回了一条消息", moveToTop: true);
+            if (SelectedUser?.UserId != session.UserId)
+            {
+                session.UnreadCount++;
+                RefreshUnreadState();
+            }
+        }
+
+        StatusMessage = $"{recall.SenderNickname} 撤回了一条消息。";
+    }
+
+    private Task HandleOfflineFileReminderAsync(NetworkPacket packet)
+    {
+        var reminder = JsonSerializer.Deserialize(packet.PayloadJson, LanTalkJsonContext.Default.OfflineFileReminderPayload);
+        if (reminder is null)
+        {
+            return Task.CompletedTask;
+        }
+
+        var session = !string.IsNullOrWhiteSpace(reminder.GroupId)
+            ? EnsureGroupSession(new ChatGroup
+            {
+                GroupId = reminder.GroupId!,
+                Name = string.IsNullOrWhiteSpace(reminder.GroupName) ? "未命名群组" : reminder.GroupName!,
+                Kind = reminder.GroupKind,
+                MemberUserIds = [reminder.SenderId, reminder.ReceiverId, _settings.UserId],
+                CreatedTime = DateTimeOffset.Now,
+                UpdatedTime = DateTimeOffset.Now
+            })
+            : EnsureUserSession(reminder.SenderId, reminder.SenderNickname, "0.0.0.0");
+        var transferText = reminder.TransferKind == FileTransferKind.Folder
+            ? "文件夹"
+            : reminder.TransferKind == FileTransferKind.MultipleFiles ? "多文件" : reminder.IsImage ? "图片" : "文件";
+        var content = !string.IsNullOrWhiteSpace(reminder.GroupId)
+            ? $"{reminder.SenderNickname} 有一个离线{transferText}等待发送：{reminder.FileName}"
+            : $"{reminder.SenderNickname} 有一个离线{transferText}等待发送：{reminder.FileName}";
+        var fileMessage = new ChatMessageViewModel
+        {
+            MessageId = reminder.ReminderId,
+            SessionId = session.UserId,
+            SenderId = reminder.SenderId,
+            ReceiverId = reminder.ReceiverId,
+            SenderName = reminder.SenderNickname,
+            Content = content,
+            TimeText = reminder.CreatedTime.ToString("HH:mm"),
+            Kind = MessageKind.File,
+            FileName = reminder.FileName,
+            FileSizeText = FormatFileSize(reminder.FileSize),
+            Progress = 0,
+            StatusText = "对方上线后会重新发送请求"
+        };
+
+        if (SelectedUser?.UserId == session.UserId)
+        {
+            Messages.Add(fileMessage);
+        }
+        else
+        {
+            session.UnreadCount++;
+            RefreshUnreadState();
+        }
+
+        UpsertRecentSession(session, $"[离线{transferText}提醒] {reminder.FileName}", moveToTop: true);
+        StatusMessage = $"收到离线{transferText}提醒：{reminder.FileName}";
+        RequestNotification($"离线{transferText}提醒", content, session.UserId);
+        return Task.CompletedTask;
+    }
+
     private OnlineUserViewModel EnsureBroadcastSession()
     {
         if (_broadcastSession is null)
@@ -2750,6 +2986,126 @@ public sealed partial class MainWindowViewModel : ViewModelBase
         TotalUnreadCount = RecentSessions.Sum(session => session.UnreadCount);
     }
 
+    private async Task MarkSessionMessagesReadAsync(OnlineUserViewModel session)
+    {
+        if (session.UserId == NetworkConstants.BroadcastSessionId)
+        {
+            return;
+        }
+
+        try
+        {
+            var readTime = DateTimeOffset.Now;
+            var messages = await _chatHistoryService.MarkSessionIncomingMessagesReadAsync(session.UserId, readTime);
+            foreach (var message in messages)
+            {
+                await SendReadReceiptForMessageAsync(message, session.IsGroupSession, readTime);
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.Warning($"发送已读回执失败：{ex.Message}");
+        }
+    }
+
+    private async Task MarkIncomingMessageReadAsync(ChatMessage message, bool isGroup)
+    {
+        try
+        {
+            var readTime = DateTimeOffset.Now;
+            await _chatHistoryService.MarkSessionIncomingMessagesReadAsync(message.SessionId, readTime);
+            await SendReadReceiptForMessageAsync(message, isGroup, readTime);
+        }
+        catch (Exception ex)
+        {
+            _logger.Warning($"发送已读回执失败：{ex.Message}");
+        }
+    }
+
+    private async Task SendReadReceiptForMessageAsync(ChatMessage message, bool isGroup, DateTimeOffset readTime)
+    {
+        var receipt = new MessageReadReceiptPayload(
+            message.MessageId,
+            message.SessionId,
+            _settings.UserId,
+            LocalNickname,
+            isGroup,
+            readTime);
+
+        if (isGroup)
+        {
+            var group = RecentSessions.FirstOrDefault(session => session.UserId == message.SessionId);
+            if (group is null)
+            {
+                return;
+            }
+
+            var sender = ResolveKnownUserInfo(message.SenderId);
+            if (sender.Status == UserStatus.Online)
+            {
+                await _messageService.SendReadReceiptAsync(_settings, sender, receipt);
+                return;
+            }
+
+            await QueueControlDeliveryAsync(sender.UserId, PacketType.MessageReadReceipt, message.MessageId, JsonSerializer.Serialize(receipt, LanTalkJsonContext.Default.MessageReadReceiptPayload), "消息发送者离线，已读回执等待补发。");
+            return;
+        }
+
+        var receiver = ResolveKnownUserInfo(message.SenderId);
+        if (receiver.Status == UserStatus.Online)
+        {
+            await _messageService.SendReadReceiptAsync(_settings, receiver, receipt);
+            return;
+        }
+
+        await QueueControlDeliveryAsync(receiver.UserId, PacketType.MessageReadReceipt, message.MessageId, JsonSerializer.Serialize(receipt, LanTalkJsonContext.Default.MessageReadReceiptPayload), "对方离线，已读回执等待补发。");
+    }
+
+    private async Task SendRecallToRecipientAsync(string recipientId, MessageRecallPayload payload)
+    {
+        var receiver = ResolveKnownUserInfo(recipientId);
+        var payloadJson = JsonSerializer.Serialize(payload, LanTalkJsonContext.Default.MessageRecallPayload);
+        if (receiver.Status == UserStatus.Online)
+        {
+            try
+            {
+                await _messageService.SendMessageRecallAsync(_settings, receiver, payload);
+                return;
+            }
+            catch (Exception ex)
+            {
+                _logger.Warning($"撤回通知发送给 {receiver.Nickname}({receiver.IpAddress}) 失败，已加入补发队列：{ex.Message}");
+                await QueueControlDeliveryAsync(recipientId, PacketType.MessageRecall, payload.MessageId, payloadJson, ex.Message);
+                return;
+            }
+        }
+
+        await QueueControlDeliveryAsync(recipientId, PacketType.MessageRecall, payload.MessageId, payloadJson, "对方离线，撤回通知等待补发。");
+    }
+
+    private static void MarkMessageRecalled(ChatMessageViewModel message, bool isMine)
+    {
+        message.IsRecalled = true;
+        message.Content = isMine ? "你撤回了一条消息" : "对方撤回了一条消息";
+        message.FileName = string.Empty;
+        message.FileSizeText = string.Empty;
+        message.Progress = 0;
+        message.StatusText = string.Empty;
+    }
+
+    private int GetReadTargetCount(OnlineUserViewModel session, MessageKind kind)
+    {
+        if (kind == MessageKind.Group)
+        {
+            return session.GroupMemberIds
+                .Where(id => !string.IsNullOrWhiteSpace(id) && id != _settings.UserId)
+                .Distinct(StringComparer.Ordinal)
+                .Count();
+        }
+
+        return kind == MessageKind.Private ? 1 : 0;
+    }
+
     private IEnumerable<UserInfo> ResolveGroupReceivers(OnlineUserViewModel group)
     {
         var memberIds = group.GroupMemberIds.ToHashSet(StringComparer.Ordinal);
@@ -2896,6 +3252,26 @@ public sealed partial class MainWindowViewModel : ViewModelBase
         string reason,
         CancellationToken cancellationToken = default)
     {
+        return QueueFileDeliveryAsync(recipientId, request, sourcePath, reason, cancellationToken);
+    }
+
+    private Task QueueGroupBatchDeliveryAsync(
+        string recipientId,
+        FileTransferRequest request,
+        string sourceMap,
+        string reason,
+        CancellationToken cancellationToken = default)
+    {
+        return QueueFileDeliveryAsync(recipientId, request, sourceMap, reason, cancellationToken);
+    }
+
+    private Task QueueFileDeliveryAsync(
+        string recipientId,
+        FileTransferRequest request,
+        string sourcePath,
+        string reason,
+        CancellationToken cancellationToken = default)
+    {
         var payloadJson = JsonSerializer.Serialize(request, LanTalkJsonContext.Default.FileTransferRequest);
         return _outgoingDeliveryRepository.SaveAsync(new OutgoingDeliveryRecord
         {
@@ -2909,21 +3285,20 @@ public sealed partial class MainWindowViewModel : ViewModelBase
         }, cancellationToken);
     }
 
-    private Task QueueGroupBatchDeliveryAsync(
+    private Task QueueControlDeliveryAsync(
         string recipientId,
-        FileTransferRequest request,
-        string sourceMap,
+        PacketType packetType,
+        string messageId,
+        string payloadJson,
         string reason,
         CancellationToken cancellationToken = default)
     {
-        var payloadJson = JsonSerializer.Serialize(request, LanTalkJsonContext.Default.FileTransferRequest);
         return _outgoingDeliveryRepository.SaveAsync(new OutgoingDeliveryRecord
         {
-            DeliveryId = CreateDeliveryId(PacketType.FileRequest, recipientId, request.FileId),
+            DeliveryId = CreateDeliveryId(packetType, recipientId, messageId),
             RecipientId = recipientId,
-            PacketType = PacketType.FileRequest,
+            PacketType = packetType,
             PayloadJson = payloadJson,
-            SourcePath = sourceMap,
             CreatedTime = DateTimeOffset.Now,
             LastError = reason
         }, cancellationToken);
@@ -2959,6 +3334,19 @@ public sealed partial class MainWindowViewModel : ViewModelBase
                 if (record.PacketType == PacketType.FileRequest)
                 {
                     await RetryGroupFileDeliveryAsync(receiver, record);
+                    continue;
+                }
+
+                if (record.PacketType == PacketType.MessageReadReceipt)
+                {
+                    await RetryReadReceiptDeliveryAsync(receiver, record);
+                    continue;
+                }
+
+                if (record.PacketType == PacketType.MessageRecall)
+                {
+                    await RetryMessageRecallDeliveryAsync(receiver, record);
+                    continue;
                 }
             }
         }
@@ -3016,6 +3404,48 @@ public sealed partial class MainWindowViewModel : ViewModelBase
         }
     }
 
+    private async Task RetryReadReceiptDeliveryAsync(UserInfo receiver, OutgoingDeliveryRecord record)
+    {
+        var payload = JsonSerializer.Deserialize(record.PayloadJson, LanTalkJsonContext.Default.MessageReadReceiptPayload);
+        if (payload is null)
+        {
+            await _outgoingDeliveryRepository.DeleteAsync(record.DeliveryId);
+            return;
+        }
+
+        try
+        {
+            await _messageService.SendReadReceiptAsync(_settings, receiver, payload);
+            await _outgoingDeliveryRepository.DeleteAsync(record.DeliveryId);
+        }
+        catch (Exception ex)
+        {
+            await _outgoingDeliveryRepository.MarkAttemptAsync(record.DeliveryId, record.AttemptCount + 1, ex.Message);
+            _logger.Warning($"已读回执补发给 {receiver.Nickname}({receiver.IpAddress}) 失败：{ex.Message}");
+        }
+    }
+
+    private async Task RetryMessageRecallDeliveryAsync(UserInfo receiver, OutgoingDeliveryRecord record)
+    {
+        var payload = JsonSerializer.Deserialize(record.PayloadJson, LanTalkJsonContext.Default.MessageRecallPayload);
+        if (payload is null)
+        {
+            await _outgoingDeliveryRepository.DeleteAsync(record.DeliveryId);
+            return;
+        }
+
+        try
+        {
+            await _messageService.SendMessageRecallAsync(_settings, receiver, payload);
+            await _outgoingDeliveryRepository.DeleteAsync(record.DeliveryId);
+        }
+        catch (Exception ex)
+        {
+            await _outgoingDeliveryRepository.MarkAttemptAsync(record.DeliveryId, record.AttemptCount + 1, ex.Message);
+            _logger.Warning($"撤回通知补发给 {receiver.Nickname}({receiver.IpAddress}) 失败：{ex.Message}");
+        }
+    }
+
     private async Task RetryGroupFileDeliveryAsync(UserInfo receiver, OutgoingDeliveryRecord record)
     {
         var request = JsonSerializer.Deserialize(record.PayloadJson, LanTalkJsonContext.Default.FileTransferRequest);
@@ -3047,6 +3477,7 @@ public sealed partial class MainWindowViewModel : ViewModelBase
 
         try
         {
+            await SendOfflineFileReminderForRequestAsync(receiver, request);
             await _messageService.SendFileRequestAsync(_settings, receiver, request);
             await _outgoingDeliveryRepository.DeleteAsync(record.DeliveryId);
             message.StatusText = "离线补发请求已发送";
@@ -3108,6 +3539,7 @@ public sealed partial class MainWindowViewModel : ViewModelBase
 
         try
         {
+            await SendOfflineFileReminderForRequestAsync(receiver, request);
             await _messageService.SendFileRequestAsync(_settings, receiver, request);
             await _outgoingDeliveryRepository.DeleteAsync(record.DeliveryId);
             message.StatusText = "离线补发请求已发送";
@@ -3121,6 +3553,34 @@ public sealed partial class MainWindowViewModel : ViewModelBase
         }
     }
 
+    private async Task SendOfflineFileReminderForRequestAsync(UserInfo receiver, FileTransferRequest request)
+    {
+        try
+        {
+            var reminder = new OfflineFileReminderPayload(
+                Guid.NewGuid().ToString("N"),
+                request.FileId,
+                request.FileName,
+                request.FileSize,
+                _settings.UserId,
+                LocalNickname,
+                receiver.UserId,
+                request.IsImage,
+                request.TransferKind,
+                request.BatchId,
+                request.BatchName,
+                request.GroupId,
+                request.GroupName,
+                request.GroupKind,
+                DateTimeOffset.Now);
+            await _messageService.SendOfflineFileReminderAsync(_settings, receiver, reminder);
+        }
+        catch (Exception ex)
+        {
+            _logger.Warning($"离线文件提醒发送失败，将继续发送文件请求：{ex.Message}");
+        }
+    }
+
     private ChatMessageViewModel EnsureOutgoingFileMessageForRetry(FileTransferRequest request, string sourcePath)
     {
         if (_outgoingFileMessages.TryGetValue(request.FileId, out var existing))
@@ -3130,6 +3590,10 @@ public sealed partial class MainWindowViewModel : ViewModelBase
 
         var message = new ChatMessageViewModel
         {
+            MessageId = request.FileId,
+            SessionId = request.GroupId ?? request.ReceiverId,
+            SenderId = _settings.UserId,
+            ReceiverId = request.GroupId ?? request.ReceiverId,
             SenderName = LocalNickname,
             Content = request.IsImage ? string.Empty : $"群组文件：{request.FileName}",
             TimeText = DateTimeOffset.Now.ToString("HH:mm"),
@@ -3701,14 +4165,24 @@ public sealed partial class MainWindowViewModel : ViewModelBase
     {
         var viewModel = new ChatMessageViewModel
         {
+            MessageId = message.MessageId,
+            SessionId = message.SessionId,
+            SenderId = message.SenderId,
+            ReceiverId = message.ReceiverId,
             SenderName = senderName,
-            Content = message.Content,
+            Content = message.IsRecalled
+                ? message.IsMine ? "你撤回了一条消息" : "对方撤回了一条消息"
+                : message.Content,
             TimeText = message.SendTime.ToString("HH:mm"),
             IsMine = message.IsMine,
-            Kind = message.Kind
+            Kind = message.Kind,
+            IsRead = message.IsRead,
+            ReadByCount = message.ReadByCount,
+            ReadTargetCount = message.ReadTargetCount,
+            IsRecalled = message.IsRecalled
         };
 
-        if (message.Kind != MessageKind.Image)
+        if (message.Kind != MessageKind.Image || message.IsRecalled)
         {
             return viewModel;
         }
@@ -3835,7 +4309,8 @@ public sealed partial class MainWindowViewModel : ViewModelBase
         string? senderId = null,
         string? receiverId = null,
         string? fileName = null,
-        long? fileSize = null)
+        long? fileSize = null,
+        int readTargetCount = 0)
     {
         return new ChatMessage
         {
@@ -3850,7 +4325,8 @@ public sealed partial class MainWindowViewModel : ViewModelBase
                 fileSize ?? fileInfo.Length,
                 localPath)),
             SendTime = DateTimeOffset.Now,
-            IsMine = isMine
+            IsMine = isMine,
+            ReadTargetCount = readTargetCount
         };
     }
 

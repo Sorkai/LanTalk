@@ -114,10 +114,105 @@ public sealed class MessageRepositoryTests
         File.Delete(databasePath);
     }
 
-    private static ChatMessage CreateMessage(string sessionId, string senderId, string content, DateTimeOffset sendTime)
+    [Fact]
+    public async Task MarkSessionIncomingMessagesReadAsync_ShouldReturnUnreadIncomingMessages()
+    {
+        var databasePath = Path.Combine(Path.GetTempPath(), $"lantalk-read-{Guid.NewGuid():N}.db");
+        var factory = new SqliteConnectionFactory(databasePath);
+        var initializer = new DatabaseInitializer(factory);
+        var repository = new MessageRepository(factory);
+
+        await initializer.InitializeAsync();
+        await repository.SaveAsync(CreateMessage("user-a", "user-a", "未读消息", DateTimeOffset.Now.AddMinutes(-1)));
+
+        var readTime = DateTimeOffset.Now;
+        var messages = await repository.MarkSessionIncomingMessagesReadAsync("user-a", readTime);
+        var history = await repository.LoadRecentMessagesAsync("user-a");
+
+        Assert.Single(messages);
+        Assert.True(history[0].IsRead);
+        Assert.NotNull(history[0].ReadTime);
+
+        SqliteConnection.ClearAllPools();
+        File.Delete(databasePath);
+    }
+
+    [Fact]
+    public async Task MarkMessageReadByAsync_ShouldTrackGroupReadCount()
+    {
+        var databasePath = Path.Combine(Path.GetTempPath(), $"lantalk-group-read-{Guid.NewGuid():N}.db");
+        var factory = new SqliteConnectionFactory(databasePath);
+        var initializer = new DatabaseInitializer(factory);
+        var repository = new MessageRepository(factory);
+
+        await initializer.InitializeAsync();
+        await repository.SaveAsync(new ChatMessage
+        {
+            MessageId = "group-message-a",
+            SessionId = "group-a",
+            SenderId = "local",
+            ReceiverId = "group-a",
+            Kind = MessageKind.Group,
+            Content = "需要大家确认",
+            SendTime = DateTimeOffset.Now,
+            IsMine = true,
+            ReadTargetCount = 2
+        });
+
+        var first = await repository.MarkMessageReadByAsync(new MessageReadReceiptPayload(
+            "group-message-a",
+            "group-a",
+            "user-b",
+            "李同学",
+            IsGroup: true,
+            DateTimeOffset.Now));
+        var second = await repository.MarkMessageReadByAsync(new MessageReadReceiptPayload(
+            "group-message-a",
+            "group-a",
+            "user-c",
+            "王同学",
+            IsGroup: true,
+            DateTimeOffset.Now));
+        var history = await repository.LoadRecentMessagesAsync("group-a");
+
+        Assert.Equal(1, first.ReadByCount);
+        Assert.False(first.IsRead);
+        Assert.Equal(2, second.ReadByCount);
+        Assert.True(second.IsRead);
+        Assert.Equal(2, history[0].ReadByCount);
+        Assert.True(history[0].IsRead);
+
+        SqliteConnection.ClearAllPools();
+        File.Delete(databasePath);
+    }
+
+    [Fact]
+    public async Task RecallMessageAsync_ShouldMarkMessageRecalled()
+    {
+        var databasePath = Path.Combine(Path.GetTempPath(), $"lantalk-recall-{Guid.NewGuid():N}.db");
+        var factory = new SqliteConnectionFactory(databasePath);
+        var initializer = new DatabaseInitializer(factory);
+        var repository = new MessageRepository(factory);
+
+        await initializer.InitializeAsync();
+        await repository.SaveAsync(CreateMessage("user-a", "local", "需要撤回", DateTimeOffset.Now, "message-a"));
+
+        await repository.RecallMessageAsync("user-a", "message-a", DateTimeOffset.Now);
+        var history = await repository.LoadRecentMessagesAsync("user-a");
+
+        Assert.Single(history);
+        Assert.True(history[0].IsRecalled);
+        Assert.NotNull(history[0].RecalledTime);
+
+        SqliteConnection.ClearAllPools();
+        File.Delete(databasePath);
+    }
+
+    private static ChatMessage CreateMessage(string sessionId, string senderId, string content, DateTimeOffset sendTime, string? messageId = null)
     {
         return new ChatMessage
         {
+            MessageId = messageId ?? Guid.NewGuid().ToString("N"),
             SessionId = sessionId,
             SenderId = senderId,
             ReceiverId = "local",

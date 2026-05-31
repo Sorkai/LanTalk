@@ -611,3 +611,30 @@
   - 一次将 `dotnet build` 和 `dotnet test` 并行执行时，`MessageService_ShouldSendEncryptedGroupMessageOverTcp` 出现 TCP 回环连接拒绝；单独重跑 `dotnet test LanTalk.sln -v:minimal` 后 55 项全部通过，判断为并行执行带来的测试时序波动。
 - 后续建议：
   - 用双机真实环境补充 100MB 多文件、深层文件夹和传输中断后续传验收。
+
+### 阶段 20 提交与推送
+- **状态：** 已完成。
+- 用户要求先把“之前的那些变更”提交推送，因此先暂停阶段 21 实现，提交并推送阶段 20。
+- 验证结果：`dotnet test LanTalk.sln -v:minimal` 55 项全部通过。
+- 提交：`fe8d344 feat: add batch file transfers and resume`。
+- 推送：`git push origin main` 成功，远端从 `eedb5ce` 更新到 `fe8d344`。
+
+### 阶段 21：已读回执、消息撤回与离线文件提醒
+- **状态：** 进行中。
+- 本轮目标：
+  - 实现私聊已读回执，发送方能看到“未读/已读”。
+  - 实现群组已读回执，按成员区分并显示“已读 x/y”。
+  - 实现消息撤回，参考钉钉式同步撤回状态，不物理删除历史。
+  - 实现离线文件提醒，对方上线后提示有文件待发送/待接收，再复用现有文件确认和流式传输链路。
+- 已执行操作：
+  - 读取 `AGENTS.md`、`README.md`、`docs/protocol.md`、`docs/test-plan.md`、`task_plan.md`、`findings.md` 和 `progress.md`。
+  - 确认阶段 20 已提交推送，阶段 21 可在最新 `main` 基线上继续实现。
+  - 将阶段 21 写入 `task_plan.md`，并把初步设计边界写入 `findings.md`。
+  - Core 新增 `MessageReadReceiptPayload`、`MessageRecallPayload`、`OfflineFileReminderPayload`，并扩展 `PacketType`、`FileTransferStatus` 和 `ChatMessage`。
+  - Storage 新增 `MessageReadReceipts` 表，`ChatMessages` 补齐已读/撤回字段和轻量迁移，`MessageRepository` 支持会话标记已读、群组成员已读统计和撤回标记。
+  - Network 新增已读回执、撤回通知和离线文件提醒发送方法。
+  - App 接入私聊/群组已读、撤回按钮、离线文件提醒队列和上线补发逻辑。
+  - 文档已更新 README、协议说明和测试计划。
+- 当前验证：
+  - 中途 `dotnet build LanTalk.sln -v:minimal` 发现 3 个变量名/作用域错误，已修复。
+  - `dotnet test LanTalk.sln -v:minimal`：63 项全部通过。

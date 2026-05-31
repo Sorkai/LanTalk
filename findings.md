@@ -363,6 +363,19 @@
 - SQLite `FileTransfers` 增加 `TransferKind`、`BatchId`、`RelativePath`、`BytesTransferred`，并提供旧表迁移。
 - 本轮自动化验证更新到 55 项通过，新增覆盖批次序列化、续传 response、文件传输记录扩展字段、旧表迁移和 TCP 文件流 offset 续传。
 
+## 2026-06-01 已读回执、消息撤回与离线文件提醒规划发现
+- 阶段 20 已先按用户要求独立提交并推送到 `main`，提交为 `fe8d344 feat: add batch file transfers and resume`，自动化验证为 55 项通过。
+- 已读回执需要区分私聊和群组：私聊可显示“未读/已读”，群组应记录成员维度并显示类似“已读 x/y”，避免把群组当成单个接收方。
+- 消息撤回应作为控制消息同步状态，SQLite 保留原消息记录并追加撤回标记/时间，UI 显示“你撤回了一条消息”或“对方撤回了一条消息”，不要物理删除历史。
+- 离线文件提醒不等同于服务端式离线文件箱；在当前无服务端架构下，发送方保存本地待提醒/待发送记录，对方上线后先收到提醒，再复用现有接收确认和 TCP 流式传输链路。
+
+## 2026-06-01 已读回执、消息撤回与离线文件提醒实现发现
+- 已读回执使用轻量控制包 `MessageReadReceipt`：私聊收到后直接置为已读，群组写入 `MessageReadReceipts` 并按 `MessageId + ReaderId` 去重统计。
+- 群组已读目标人数来自发送方本地群组成员数减去自己；旧历史消息如果没有 `ReadTargetCount`，仍可记录已读人数，但不会误判全员已读。
+- 消息撤回使用 `MessageRecall` 控制包和 `ChatMessages.IsRecalled/RecalledTime`，UI 层隐藏原文件/图片卡片并改为撤回提示，历史搜索加载后也保持撤回态。
+- 离线文件提醒复用 `OutgoingDeliveries`：单文件保存源路径，批量/文件夹保存 fileId 到源路径的 base64 映射；成员上线重试前先发送 `OfflineFileReminder`，随后重新发送原 `FileRequest`。
+- 当前自动化验证已扩展到 63 项，覆盖新增 payload 序列化、TCP 控制包回环、旧表迁移、仓储已读/撤回行为。
+
 ## 资源
 - `C:\pr\LanTalk\AGENTS.md`：主要 Agent / 项目规则。
 - `C:\pr\LanTalk\lan_talk_codex项目说明文档.md`：项目需求、架构、里程碑、验收要求。

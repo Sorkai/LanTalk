@@ -30,6 +30,9 @@
 - `EncryptionHello`：端到端加密协商请求。
 - `EncryptionAck`：端到端加密协商确认。
 - `EncryptionCancel`：关闭端到端加密会话。
+- `MessageReadReceipt`：消息已读回执。
+- `MessageRecall`：消息撤回通知。
+- `OfflineFileReminder`：离线文件提醒。
 
 ## 包结构
 网络包统一使用 `NetworkPacket`，载荷放入 `PayloadJson`，并使用 `LanTalkJsonContext` 进行 Source Generator 序列化。
@@ -60,6 +63,13 @@
 - 群组文本端到端加密使用逐成员加密策略：开启后，在线且已完成一对一 E2EE 协商的成员立即收到加密 `GroupMessage`；离线或未协商成员进入 `OutgoingDeliveries` 队列并标记 `RequiresEncryption`。
 - 后续若需要更接近成熟 IM 的群组加密，可在此基础上增加群密钥 epoch、成员变更轮换和附件内容加密。
 
+## 已读回执与消息撤回
+- 私聊已读：接收方打开私聊会话或当前会话收到消息时发送 `MessageReadReceipt`，发送方本地将消息状态从“未读”更新为“已读”。
+- 群组已读：接收方打开群组会话或当前群组收到消息时发送 `MessageReadReceipt` 给原发送者；发送方按 `MessageId + ReaderId` 去重，并显示“已读 x/y”。
+- 已读状态本地保存到 `ChatMessages` 和 `MessageReadReceipts`，用于重启后恢复发送方可见状态。
+- 消息撤回：发送者触发撤回后发送 `MessageRecall` 给私聊对方或群组成员；本地 SQLite 不物理删除原记录，只标记 `IsRecalled` 和 `RecalledTime`。
+- 撤回展示：发送方显示“你撤回了一条消息”，接收方显示“对方撤回了一条消息”。离线成员的撤回通知进入发送方待投递队列，重新上线后补发。
+
 ## 文件传输
 - 文件请求通过 TCP 消息端口发送 `FileTransferRequest`。
 - 接收方返回 `FileTransferResponse`，对应 `FileAccept` 或 `FileReject`。
@@ -78,3 +88,4 @@
   3. 发送方从 offset 位置 `Seek` 后继续流式发送剩余内容。
   4. 接收方以追加方式写入，完成后继续发送 `FileFinished`。
 - 文件内容使用 64KB 缓冲区分块传输，不使用 `File.ReadAllBytes`。
+- 离线文件提醒：当文件、图片、多文件或文件夹请求发送给离线成员或发送失败时，发送方将 `FileRequest` 和源路径保存到 `OutgoingDeliveries`。成员上线后发送方先发 `OfflineFileReminder`，再重新发送原 `FileRequest`，接收方仍需确认后才开始 TCP 文件流传输。

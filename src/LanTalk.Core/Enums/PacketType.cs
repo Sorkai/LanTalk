@@ -16,5 +16,8 @@ public enum PacketType
     Error,
     EncryptionHello,
     EncryptionAck,
-    EncryptionCancel
+    EncryptionCancel,
+    MessageReadReceipt,
+    MessageRecall,
+    OfflineFileReminder
 }

@@ -19,5 +19,16 @@ public sealed class ChatMessage
     public DateTimeOffset SendTime { get; init; } = DateTimeOffset.Now;
 
     public bool IsMine { get; init; }
-}
 
+    public bool IsRead { get; init; }
+
+    public DateTimeOffset? ReadTime { get; init; }
+
+    public int ReadByCount { get; init; }
+
+    public int ReadTargetCount { get; init; }
+
+    public bool IsRecalled { get; init; }
+
+    public DateTimeOffset? RecalledTime { get; init; }
+}

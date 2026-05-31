@@ -212,4 +212,70 @@ public sealed class SerializationTests
         Assert.Contains("user-b", restored.MemberUserIds);
         Assert.Equal("大家同步一下进度", restored.Content);
     }
+
+    [Fact]
+    public void MessageReadReceiptPayload_ShouldRoundTrip()
+    {
+        var payload = new MessageReadReceiptPayload(
+            "message-a",
+            "group-a",
+            "user-b",
+            "李同学",
+            IsGroup: true,
+            DateTimeOffset.Parse("2026-06-01T10:00:00+08:00"));
+
+        var json = JsonSerializer.Serialize(payload, LanTalkJsonContext.Default.MessageReadReceiptPayload);
+        var restored = JsonSerializer.Deserialize(json, LanTalkJsonContext.Default.MessageReadReceiptPayload);
+
+        Assert.NotNull(restored);
+        Assert.True(restored.IsGroup);
+        Assert.Equal("user-b", restored.ReaderUserId);
+    }
+
+    [Fact]
+    public void MessageRecallPayload_ShouldRoundTrip()
+    {
+        var payload = new MessageRecallPayload(
+            "message-a",
+            "user-b",
+            "user-a",
+            "张同学",
+            IsGroup: false,
+            DateTimeOffset.Parse("2026-06-01T10:01:00+08:00"));
+
+        var json = JsonSerializer.Serialize(payload, LanTalkJsonContext.Default.MessageRecallPayload);
+        var restored = JsonSerializer.Deserialize(json, LanTalkJsonContext.Default.MessageRecallPayload);
+
+        Assert.NotNull(restored);
+        Assert.False(restored.IsGroup);
+        Assert.Equal("message-a", restored.MessageId);
+    }
+
+    [Fact]
+    public void OfflineFileReminderPayload_ShouldRoundTrip()
+    {
+        var payload = new OfflineFileReminderPayload(
+            "reminder-a",
+            "file-a",
+            "资料包",
+            4096,
+            "user-a",
+            "张同学",
+            "user-b",
+            IsImage: false,
+            FileTransferKind.Folder,
+            "batch-a",
+            "资料包",
+            "group-a",
+            "项目组",
+            GroupKind.Permanent,
+            DateTimeOffset.Parse("2026-06-01T10:02:00+08:00"));
+
+        var json = JsonSerializer.Serialize(payload, LanTalkJsonContext.Default.OfflineFileReminderPayload);
+        var restored = JsonSerializer.Deserialize(json, LanTalkJsonContext.Default.OfflineFileReminderPayload);
+
+        Assert.NotNull(restored);
+        Assert.Equal(FileTransferKind.Folder, restored.TransferKind);
+        Assert.Equal("项目组", restored.GroupName);
+    }
 }

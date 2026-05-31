@@ -24,6 +24,7 @@ public sealed class DatabaseInitializer
         }
 
         await EnsureKnownUsersDepartmentColumnAsync(connection, cancellationToken).ConfigureAwait(false);
+        await EnsureChatMessagesStateColumnsAsync(connection, cancellationToken).ConfigureAwait(false);
         await EnsureFileTransfersBatchColumnsAsync(connection, cancellationToken).ConfigureAwait(false);
         await EnsureOutgoingDeliveriesSourcePathColumnAsync(connection, cancellationToken).ConfigureAwait(false);
         await EnsureOutgoingDeliveriesRequiresEncryptionColumnAsync(connection, cancellationToken).ConfigureAwait(false);
@@ -111,6 +112,36 @@ public sealed class DatabaseInitializer
         }
     }
 
+    private static async Task EnsureChatMessagesStateColumnsAsync(SqliteConnection connection, CancellationToken cancellationToken)
+    {
+        var columns = await LoadColumnNamesAsync(connection, "ChatMessages", cancellationToken).ConfigureAwait(false);
+
+        if (!columns.Contains("IsRead"))
+        {
+            await AddColumnAsync(connection, "ChatMessages", "IsRead INTEGER NOT NULL DEFAULT 0", cancellationToken).ConfigureAwait(false);
+        }
+
+        if (!columns.Contains("ReadTime"))
+        {
+            await AddColumnAsync(connection, "ChatMessages", "ReadTime TEXT", cancellationToken).ConfigureAwait(false);
+        }
+
+        if (!columns.Contains("ReadTargetCount"))
+        {
+            await AddColumnAsync(connection, "ChatMessages", "ReadTargetCount INTEGER NOT NULL DEFAULT 0", cancellationToken).ConfigureAwait(false);
+        }
+
+        if (!columns.Contains("IsRecalled"))
+        {
+            await AddColumnAsync(connection, "ChatMessages", "IsRecalled INTEGER NOT NULL DEFAULT 0", cancellationToken).ConfigureAwait(false);
+        }
+
+        if (!columns.Contains("RecalledTime"))
+        {
+            await AddColumnAsync(connection, "ChatMessages", "RecalledTime TEXT", cancellationToken).ConfigureAwait(false);
+        }
+    }
+
     private static async Task<HashSet<string>> LoadColumnNamesAsync(SqliteConnection connection, string tableName, CancellationToken cancellationToken)
     {
         await using var command = connection.CreateCommand();
@@ -156,7 +187,12 @@ public sealed class DatabaseInitializer
             MessageType TEXT NOT NULL,
             Content TEXT NOT NULL,
             SendTime TEXT NOT NULL,
-            IsMine INTEGER NOT NULL
+            IsMine INTEGER NOT NULL,
+            IsRead INTEGER NOT NULL DEFAULT 0,
+            ReadTime TEXT,
+            ReadTargetCount INTEGER NOT NULL DEFAULT 0,
+            IsRecalled INTEGER NOT NULL DEFAULT 0,
+            RecalledTime TEXT
         );
         """,
         """
@@ -200,6 +236,16 @@ public sealed class DatabaseInitializer
         );
         """,
         """
+        CREATE TABLE IF NOT EXISTS MessageReadReceipts (
+            MessageId TEXT NOT NULL,
+            SessionId TEXT NOT NULL,
+            ReaderId TEXT NOT NULL,
+            ReaderNickname TEXT NOT NULL,
+            ReadTime TEXT NOT NULL,
+            PRIMARY KEY (MessageId, ReaderId)
+        );
+        """,
+        """
         CREATE INDEX IF NOT EXISTS IX_ChatMessages_SessionId_SendTime
         ON ChatMessages(SessionId, SendTime);
         """,
@@ -214,6 +260,10 @@ public sealed class DatabaseInitializer
         """
         CREATE INDEX IF NOT EXISTS IX_OutgoingDeliveries_RecipientId_CreatedTime
         ON OutgoingDeliveries(RecipientId, CreatedTime);
+        """,
+        """
+        CREATE INDEX IF NOT EXISTS IX_MessageReadReceipts_SessionId_MessageId
+        ON MessageReadReceipts(SessionId, MessageId);
         """
     ];
 }

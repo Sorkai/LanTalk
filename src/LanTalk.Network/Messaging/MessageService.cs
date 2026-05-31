@@ -177,6 +177,45 @@ public sealed class MessageService : IAsyncDisposable
         return _client.SendAsync(receiver.IpAddress, receiver.MessagePort, packet, cancellationToken);
     }
 
+    public Task SendReadReceiptAsync(AppSettings localSettings, UserInfo receiver, MessageReadReceiptPayload receipt, CancellationToken cancellationToken = default)
+    {
+        var packet = new NetworkPacket
+        {
+            Type = PacketType.MessageReadReceipt,
+            FromUserId = localSettings.UserId,
+            ToUserId = receiver.UserId,
+            PayloadJson = JsonSerializer.Serialize(receipt, LanTalkJsonContext.Default.MessageReadReceiptPayload)
+        };
+
+        return _client.SendAsync(receiver.IpAddress, receiver.MessagePort, packet, cancellationToken);
+    }
+
+    public Task SendMessageRecallAsync(AppSettings localSettings, UserInfo receiver, MessageRecallPayload recall, CancellationToken cancellationToken = default)
+    {
+        var packet = new NetworkPacket
+        {
+            Type = PacketType.MessageRecall,
+            FromUserId = localSettings.UserId,
+            ToUserId = receiver.UserId,
+            PayloadJson = JsonSerializer.Serialize(recall, LanTalkJsonContext.Default.MessageRecallPayload)
+        };
+
+        return _client.SendAsync(receiver.IpAddress, receiver.MessagePort, packet, cancellationToken);
+    }
+
+    public Task SendOfflineFileReminderAsync(AppSettings localSettings, UserInfo receiver, OfflineFileReminderPayload reminder, CancellationToken cancellationToken = default)
+    {
+        var packet = new NetworkPacket
+        {
+            Type = PacketType.OfflineFileReminder,
+            FromUserId = localSettings.UserId,
+            ToUserId = receiver.UserId,
+            PayloadJson = JsonSerializer.Serialize(reminder, LanTalkJsonContext.Default.OfflineFileReminderPayload)
+        };
+
+        return _client.SendAsync(receiver.IpAddress, receiver.MessagePort, packet, cancellationToken);
+    }
+
     public async Task<BroadcastSendResult> BroadcastAsync(AppSettings localSettings, IEnumerable<UserInfo> receivers, string content, CancellationToken cancellationToken = default)
     {
         var success = 0;

@@ -110,6 +110,65 @@ public sealed class MessageServiceTests
     }
 
     [Fact]
+    public async Task MessageService_ShouldSendReadRecallAndOfflineReminderPackets()
+    {
+        var logger = new ConsoleLanTalkLogger();
+        var service = new MessageService(new TcpMessageClient(), new TcpMessageServer(logger), logger);
+        var readReceived = new TaskCompletionSource<NetworkPacket>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var recallReceived = new TaskCompletionSource<NetworkPacket>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var reminderReceived = new TaskCompletionSource<NetworkPacket>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var port = Random.Shared.Next(56000, 59000);
+
+        service.PacketReceived += (_, packet) =>
+        {
+            if (packet.Type == PacketType.MessageReadReceipt)
+            {
+                readReceived.TrySetResult(packet);
+            }
+
+            if (packet.Type == PacketType.MessageRecall)
+            {
+                recallReceived.TrySetResult(packet);
+            }
+
+            if (packet.Type == PacketType.OfflineFileReminder)
+            {
+                reminderReceived.TrySetResult(packet);
+            }
+        };
+
+        await service.StartAsync(port);
+
+        var local = new AppSettings { UserId = "user-a" };
+        var receiver = new UserInfo
+        {
+            UserId = "user-b",
+            Nickname = "接收方",
+            IpAddress = "127.0.0.1",
+            MessagePort = port,
+            FilePort = port + 1,
+            Status = UserStatus.Online,
+            LastSeenTime = DateTimeOffset.Now
+        };
+
+        await service.SendReadReceiptAsync(local, receiver, new MessageReadReceiptPayload("message-a", "user-b", "user-a", "张同学", false, DateTimeOffset.Now));
+        var readCompleted = await Task.WhenAny(readReceived.Task, Task.Delay(TimeSpan.FromSeconds(3)));
+
+        await service.SendMessageRecallAsync(local, receiver, new MessageRecallPayload("message-a", "user-b", "user-a", "张同学", false, DateTimeOffset.Now));
+        var recallCompleted = await Task.WhenAny(recallReceived.Task, Task.Delay(TimeSpan.FromSeconds(3)));
+
+        await service.SendOfflineFileReminderAsync(local, receiver, new OfflineFileReminderPayload("reminder-a", "file-a", "资料.zip", 1024, "user-a", "张同学", "user-b", false, FileTransferKind.SingleFile, null, null, null, null, GroupKind.Temporary, DateTimeOffset.Now));
+        var reminderCompleted = await Task.WhenAny(reminderReceived.Task, Task.Delay(TimeSpan.FromSeconds(3)));
+
+        await service.StopAsync();
+        await service.DisposeAsync();
+
+        Assert.Same(readReceived.Task, readCompleted);
+        Assert.Same(recallReceived.Task, recallCompleted);
+        Assert.Same(reminderReceived.Task, reminderCompleted);
+    }
+
+    [Fact]
     public async Task MessageService_ShouldSendGroupFileRequestOverTcp()
     {
         var logger = new ConsoleLanTalkLogger();

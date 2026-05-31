@@ -8,6 +8,6 @@ public enum FileTransferStatus
     Transferring,
     Completed,
     Failed,
-    Canceled
+    Canceled,
+    OfflineQueued
 }
-

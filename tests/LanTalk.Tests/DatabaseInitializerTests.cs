@@ -162,4 +162,56 @@ public sealed class DatabaseInitializerTests
         SqliteConnection.ClearAllPools();
         File.Delete(databasePath);
     }
+
+    [Fact]
+    public async Task InitializeAsync_ShouldMigrateChatMessageStateColumns()
+    {
+        var databasePath = Path.Combine(Path.GetTempPath(), $"lantalk-migrate-messages-{Guid.NewGuid():N}.db");
+        var factory = new SqliteConnectionFactory(databasePath);
+
+        await using (var connection = factory.CreateConnection())
+        {
+            await connection.OpenAsync();
+            await using var command = connection.CreateCommand();
+            command.CommandText =
+                """
+                CREATE TABLE ChatMessages (
+                    MessageId TEXT PRIMARY KEY,
+                    SessionId TEXT NOT NULL,
+                    SenderId TEXT NOT NULL,
+                    ReceiverId TEXT,
+                    MessageType TEXT NOT NULL,
+                    Content TEXT NOT NULL,
+                    SendTime TEXT NOT NULL,
+                    IsMine INTEGER NOT NULL
+                );
+                """;
+            await command.ExecuteNonQueryAsync();
+        }
+
+        var initializer = new DatabaseInitializer(factory);
+        await initializer.InitializeAsync();
+
+        var columns = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        await using (var verifyConnection = factory.CreateConnection())
+        {
+            await verifyConnection.OpenAsync();
+            await using var verifyCommand = verifyConnection.CreateCommand();
+            verifyCommand.CommandText = "PRAGMA table_info(ChatMessages);";
+
+            await using var reader = await verifyCommand.ExecuteReaderAsync();
+            while (await reader.ReadAsync())
+            {
+                columns.Add(reader.GetString(1));
+            }
+        }
+
+        Assert.Contains("IsRead", columns);
+        Assert.Contains("ReadTime", columns);
+        Assert.Contains("ReadTargetCount", columns);
+        Assert.Contains("IsRecalled", columns);
+        Assert.Contains("RecalledTime", columns);
+        SqliteConnection.ClearAllPools();
+        File.Delete(databasePath);
+    }
 }
