@@ -508,3 +508,16 @@
 - 当前验证：
   - `dotnet build LanTalk.sln -v:minimal`：0 警告，0 错误。
   - `dotnet test LanTalk.sln -v:minimal`：43 个测试全部通过。
+
+### 加密基础设施打磨：HKDF 官方实现替换
+- **状态：** 已完成并验证通过。
+- 本轮目标：
+  - 将 `EndToEndEncryptionManager` 中手写 HKDF-SHA256 Extract/Expand 替换为 .NET 官方 `System.Security.Cryptography.HKDF`。
+  - 保持现有私聊端到端加密协议、密钥指纹、AES-GCM 消息加解密行为不变。
+- 已执行操作：
+  - 查阅 Microsoft Learn 官方 API：`HKDF.DeriveKey(HashAlgorithmName, ikm, outputLength, salt, info)`。
+  - 将私聊 ECDH 共享密钥派生改为 `HKDF.DeriveKey(HashAlgorithmName.SHA256, sharedSecret, KeySize, salt, info)`。
+  - 删除本地 `HkdfSha256` 手写实现，减少自维护密码学代码。
+- 验证结果：
+  - `dotnet build LanTalk.sln -v:minimal`：0 警告，0 错误。
+  - `dotnet test LanTalk.sln -v:minimal`：43 个测试全部通过。

@@ -311,6 +311,12 @@
 - 永久群组需要独立 `ChatGroups` 表保存群名称、类型、成员列表和更新时间；临时群组不写入该表。
 - 群组暂不接入一对一端到端加密和文件/图片发送，避免把私聊密钥状态与文件传输状态机混入多人场景。
 
+## 2026-05-31 HKDF 官方实现替换发现
+- .NET 提供 `System.Security.Cryptography.HKDF`，可直接执行 RFC5869 HMAC-based Extract-and-Expand Key Derivation。
+- `HKDF.DeriveKey(HashAlgorithmName.SHA256, ikm, outputLength, salt, info)` 与当前私聊加密所需的 SHA-256 HKDF 参数模型匹配。
+- 本轮替换只影响 `EndToEndEncryptionManager` 内部派生函数，保留现有 ECDH P-256、AES-256-GCM、密钥指纹、协议载荷和 UI 行为。
+- 这能减少手写密码学代码面积，为后续群组端到端加密复用密钥派生逻辑打更稳的基础。
+
 ## 资源
 - `C:\pr\LanTalk\AGENTS.md`：主要 Agent / 项目规则。
 - `C:\pr\LanTalk\lan_talk_codex项目说明文档.md`：项目需求、架构、里程碑、验收要求。

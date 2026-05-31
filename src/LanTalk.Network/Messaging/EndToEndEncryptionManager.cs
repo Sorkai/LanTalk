@@ -195,48 +195,11 @@ public sealed class EndToEndEncryptionManager : IDisposable
         {
             var salt = SHA256.HashData(Encoding.UTF8.GetBytes($"{sessionId}|{CreateSessionId(localUserId, peerUserId)}|{keyId}"));
             var info = Encoding.UTF8.GetBytes(Algorithm);
-            return HkdfSha256(sharedSecret, salt, info, KeySize);
+            return HKDF.DeriveKey(HashAlgorithmName.SHA256, sharedSecret, KeySize, salt, info);
         }
         finally
         {
             CryptographicOperations.ZeroMemory(sharedSecret);
-        }
-    }
-
-    private static byte[] HkdfSha256(byte[] inputKeyMaterial, byte[] salt, byte[] info, int length)
-    {
-        using var extract = new HMACSHA256(salt);
-        var pseudoRandomKey = extract.ComputeHash(inputKeyMaterial);
-        var output = new byte[length];
-        var previous = Array.Empty<byte>();
-        var offset = 0;
-        byte counter = 1;
-
-        try
-        {
-            while (offset < length)
-            {
-                using var expand = new HMACSHA256(pseudoRandomKey);
-                var input = new byte[previous.Length + info.Length + 1];
-                Buffer.BlockCopy(previous, 0, input, 0, previous.Length);
-                Buffer.BlockCopy(info, 0, input, previous.Length, info.Length);
-                input[^1] = counter++;
-
-                previous = expand.ComputeHash(input);
-                var bytesToCopy = Math.Min(previous.Length, length - offset);
-                Buffer.BlockCopy(previous, 0, output, offset, bytesToCopy);
-                offset += bytesToCopy;
-            }
-
-            return output;
-        }
-        finally
-        {
-            CryptographicOperations.ZeroMemory(pseudoRandomKey);
-            if (previous.Length > 0)
-            {
-                CryptographicOperations.ZeroMemory(previous);
-            }
         }
     }
 
