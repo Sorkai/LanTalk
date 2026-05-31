@@ -1,12 +1,15 @@
 using System.Collections.ObjectModel;
 using System.Net;
 using System.Net.Sockets;
+using System.Security.Cryptography;
+using System.Text;
 using System.Text.Json;
 using Avalonia.Media;
 using Avalonia.Media.Imaging;
 using Avalonia.Threading;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
+using LanTalk.Core.Compression;
 using LanTalk.Core.Constants;
 using LanTalk.Core.Enums;
 using LanTalk.Core.Models;
@@ -30,6 +33,7 @@ namespace LanTalk.App.ViewModels;
 public sealed partial class MainWindowViewModel : ViewModelBase
 {
     private readonly SettingsService _settingsService;
+    private readonly IStartupRegistrationService _startupRegistrationService;
     private readonly ChatHistoryService _chatHistoryService;
     private readonly DiscoveryService _discoveryService;
     private readonly MessageService _messageService;
@@ -43,6 +47,7 @@ public sealed partial class MainWindowViewModel : ViewModelBase
     private readonly Dictionary<string, FileTransferRequest> _pendingFileRequests = new(StringComparer.Ordinal);
     private readonly Dictionary<string, string> _outgoingFilePaths = new(StringComparer.Ordinal);
     private readonly Dictionary<string, UserInfo> _outgoingFileReceivers = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, FileTransferRequest> _outgoingFileRequests = new(StringComparer.Ordinal);
     private readonly Dictionary<string, ChatMessageViewModel> _outgoingFileMessages = new(StringComparer.Ordinal);
     private readonly Dictionary<string, GroupFileTransferState> _outgoingGroupFileStates = new(StringComparer.Ordinal);
     private readonly Dictionary<string, OutgoingBatchTransfer> _outgoingBatchTransfers = new(StringComparer.Ordinal);
@@ -50,6 +55,7 @@ public sealed partial class MainWindowViewModel : ViewModelBase
     private readonly Dictionary<string, FileBatchTransferState> _incomingBatchStates = new(StringComparer.Ordinal);
     private readonly Dictionary<string, ChatMessageViewModel> _incomingFileMessages = new(StringComparer.Ordinal);
     private readonly Dictionary<string, string> _incomingSavePaths = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, string> _incomingCompressedTempPaths = new(StringComparer.Ordinal);
     private readonly HashSet<string> _incomingFinishedNotifications = new(StringComparer.Ordinal);
     private readonly HashSet<string> _retryingDeliveryRecipients = new(StringComparer.Ordinal);
     private readonly HashSet<string> _encryptedGroupSessions = new(StringComparer.Ordinal);
@@ -206,6 +212,7 @@ public sealed partial class MainWindowViewModel : ViewModelBase
     public MainWindowViewModel(AppServices services)
     {
         _settingsService = services.SettingsService;
+        _startupRegistrationService = services.StartupRegistrationService;
         _chatHistoryService = services.ChatHistoryService;
         _discoveryService = services.DiscoveryService;
         _messageService = services.MessageService;
@@ -643,12 +650,27 @@ public sealed partial class MainWindowViewModel : ViewModelBase
         _settings.Department = NormalizeDepartment(Settings.Department);
         _settings.FileSavePath = Settings.FileSavePath.Trim();
         _settings.SaveChatHistory = Settings.SaveChatHistory;
+        _settings.PreferSystemNotifications = Settings.PreferSystemNotifications;
+        _settings.EnableFileCompression = Settings.EnableFileCompression;
+        _settings.LaunchOnStartup = Settings.LaunchOnStartup;
         _settings.ThemeMode = Settings.ThemeMode;
         _settings.ThemeColor = Settings.ThemeColor;
         _settings.UdpPort = Settings.UdpPort;
         _settings.MessagePort = Settings.MessagePort;
         _settings.FilePort = Settings.FilePort;
         _settings.DiscoverySubnet = normalizedDiscoverySubnet;
+
+        try
+        {
+            _startupRegistrationService.SetEnabled(_settings.LaunchOnStartup);
+        }
+        catch (Exception ex)
+        {
+            _logger.Error("更新开机自启设置失败。", ex);
+            Settings.LaunchOnStartup = _settings.LaunchOnStartup = _startupRegistrationService.IsEnabled();
+            StatusMessage = $"更新开机自启设置失败：{ex.Message}";
+            return;
+        }
 
         await _settingsService.SaveAsync(_settings);
         AppThemeService.Apply(_settings);
@@ -689,7 +711,7 @@ public sealed partial class MainWindowViewModel : ViewModelBase
         }
 
         Directory.CreateDirectory(Path.GetDirectoryName(savePath) ?? _settings.FileSavePath);
-        var resumeOffset = GetResumeOffset(savePath, request.FileSize);
+        var resumeOffset = IsResumeSupported(request) ? GetResumeOffset(savePath, request.FileSize) : 0;
         fileMessage.StatusText = resumeOffset > 0 ? "已接受，等待断点续传" : "已接受，等待传输";
 
         await _fileTransferRepository.SaveAsync(new FileTransferRecord
@@ -1106,6 +1128,78 @@ public sealed partial class MainWindowViewModel : ViewModelBase
         await SendSelectedFileAsync(selectedPath, isImage: true);
     }
 
+    [RelayCommand]
+    private async Task ExportCurrentSessionAsync()
+    {
+        if (SelectedUser is null)
+        {
+            StatusMessage = "请先选择一个会话再导出聊天记录。";
+            return;
+        }
+
+        try
+        {
+            var sessionId = SelectedUser.UserId == NetworkConstants.BroadcastSessionId
+                ? NetworkConstants.BroadcastSessionId
+                : SelectedUser.UserId;
+            var messages = await _chatHistoryService.LoadMessagesForExportAsync(sessionId);
+            var exportPath = await PickSaveFileAsync(
+                "导出当前会话记录",
+                $"{ToSafePathSegment(SelectedUser.Nickname)}-{DateTime.Now:yyyyMMdd-HHmmss}.json",
+                [
+                    new FilePickerFileType("JSON 文件") { Patterns = ["*.json"] },
+                    new FilePickerFileType("CSV 文件") { Patterns = ["*.csv"] }
+                ],
+                "json");
+            if (string.IsNullOrWhiteSpace(exportPath))
+            {
+                return;
+            }
+
+            if (Path.GetExtension(exportPath).Equals(".csv", StringComparison.OrdinalIgnoreCase))
+            {
+                await ExportMessagesAsCsvAsync(exportPath, messages);
+            }
+            else
+            {
+                await ExportMessagesAsJsonAsync(exportPath, messages);
+            }
+
+            StatusMessage = $"已导出当前会话记录：{Path.GetFileName(exportPath)}";
+        }
+        catch (Exception ex)
+        {
+            _logger.Error("导出当前会话记录失败。", ex);
+            StatusMessage = $"导出当前会话记录失败：{ex.Message}";
+        }
+    }
+
+    [RelayCommand]
+    private async Task ExportFileTransfersAsync()
+    {
+        try
+        {
+            var records = await _fileTransferRepository.LoadForExportAsync();
+            var exportPath = await PickSaveFileAsync(
+                "导出文件传输记录",
+                $"文件传输记录-{DateTime.Now:yyyyMMdd-HHmmss}.csv",
+                [new FilePickerFileType("CSV 文件") { Patterns = ["*.csv"] }],
+                "csv");
+            if (string.IsNullOrWhiteSpace(exportPath))
+            {
+                return;
+            }
+
+            await ExportFileTransfersAsCsvAsync(exportPath, records);
+            StatusMessage = $"已导出文件传输记录：{Path.GetFileName(exportPath)}";
+        }
+        catch (Exception ex)
+        {
+            _logger.Error("导出文件传输记录失败。", ex);
+            StatusMessage = $"导出文件传输记录失败：{ex.Message}";
+        }
+    }
+
     private async Task SendSelectedFileAsync(string selectedPath, bool isImage)
     {
         if (SelectedUser is null)
@@ -1128,7 +1222,9 @@ public sealed partial class MainWindowViewModel : ViewModelBase
 
         var fileId = Guid.NewGuid().ToString("N");
         var receiver = ToUserInfo(SelectedUser);
-        var request = new FileTransferRequest(fileId, fileInfo.Name, fileInfo.Length, _settings.UserId, receiver.UserId, _settings.FilePort, isImage);
+        var request = PrepareOutgoingFileRequest(
+            new FileTransferRequest(fileId, fileInfo.Name, fileInfo.Length, _settings.UserId, receiver.UserId, _settings.FilePort, isImage),
+            receiver);
         var fileMessage = new ChatMessageViewModel
         {
             MessageId = fileId,
@@ -1167,6 +1263,7 @@ public sealed partial class MainWindowViewModel : ViewModelBase
 
         _outgoingFilePaths[fileId] = selectedPath;
         _outgoingFileReceivers[fileId] = receiver;
+        _outgoingFileRequests[fileId] = request;
         _outgoingFileMessages[fileId] = fileMessage;
         UpsertRecentSession(SelectedUser, isImage ? $"[图片] {fileInfo.Name}" : $"[文件] {fileInfo.Name}", moveToTop: true);
 
@@ -1296,11 +1393,8 @@ public sealed partial class MainWindowViewModel : ViewModelBase
             await SaveBatchRecordAsync(item.FileId, receiver.UserId, item.FileName, item.FileSize, transferKind, batchId, item.RelativePath, FileTransferStatus.Pending);
         }
 
-        _outgoingFileMessages[batchId] = fileMessage;
-        _outgoingFileReceivers[batchId] = receiver;
-        _outgoingBatchTransfers[batchId] = new OutgoingBatchTransfer(batchId, receiver, batchItems, fileMessage, state, transferKind);
-
-        var request = new FileTransferRequest(
+        var request = PrepareOutgoingFileRequest(
+            new FileTransferRequest(
             batchId,
             displayName,
             totalSize,
@@ -1311,7 +1405,12 @@ public sealed partial class MainWindowViewModel : ViewModelBase
             TransferKind: transferKind,
             BatchId: batchId,
             BatchName: displayName,
-            Items: fileItems);
+            Items: fileItems),
+            receiver);
+
+        _outgoingFileMessages[batchId] = fileMessage;
+        _outgoingFileReceivers[batchId] = receiver;
+        _outgoingBatchTransfers[batchId] = new OutgoingBatchTransfer(batchId, receiver, request, batchItems, fileMessage, state, transferKind);
 
         var sourceMap = BuildSourceMap(localItems);
         if (receiver.Status != UserStatus.Online)
@@ -1409,6 +1508,7 @@ public sealed partial class MainWindowViewModel : ViewModelBase
             var receiver = onlineReceivers.TryGetValue(recipientId, out var onlineReceiver)
                 ? onlineReceiver
                 : ResolveKnownUserInfo(recipientId);
+            request = PrepareOutgoingFileRequest(request, receiver);
 
             var outgoingItems = new List<OutgoingBatchItem>();
             foreach (var item in clonedItems.Where(item => !item.IsDirectory))
@@ -1420,7 +1520,7 @@ public sealed partial class MainWindowViewModel : ViewModelBase
 
             _outgoingFileMessages[batchId] = fileMessage;
             _outgoingFileReceivers[batchId] = receiver;
-            _outgoingBatchTransfers[batchId] = new OutgoingBatchTransfer(batchId, receiver, outgoingItems, fileMessage, state, transferKind);
+            _outgoingBatchTransfers[batchId] = new OutgoingBatchTransfer(batchId, receiver, request, outgoingItems, fileMessage, state, transferKind);
 
             if (!onlineReceivers.TryGetValue(recipientId, out var onlineUser))
             {
@@ -1535,14 +1635,16 @@ public sealed partial class MainWindowViewModel : ViewModelBase
                 memberIds,
                 groupMessageId);
 
-            _outgoingFilePaths[fileId] = selectedPath;
-            _outgoingFileMessages[fileId] = fileMessage;
-            _outgoingGroupFileStates[fileId] = state;
-
             var knownReceiver = onlineReceivers.TryGetValue(recipientId, out var onlineReceiver)
                 ? onlineReceiver
                 : ResolveKnownUserInfo(recipientId);
+            request = PrepareOutgoingFileRequest(request, knownReceiver);
+
+            _outgoingFilePaths[fileId] = selectedPath;
             _outgoingFileReceivers[fileId] = knownReceiver;
+            _outgoingFileRequests[fileId] = request;
+            _outgoingFileMessages[fileId] = fileMessage;
+            _outgoingGroupFileStates[fileId] = state;
 
             await _fileTransferRepository.SaveAsync(new FileTransferRecord
             {
@@ -1583,6 +1685,261 @@ public sealed partial class MainWindowViewModel : ViewModelBase
         StatusMessage = queued == 0 && failure == 0
             ? $"群组{(isImage ? "图片" : "文件")}请求已发送给 {success} 个在线成员。"
             : $"群组{(isImage ? "图片" : "文件")}请求已发送 {success} 人，离线补发 {queued + failure} 人。";
+    }
+
+    private FileTransferRequest PrepareOutgoingFileRequest(FileTransferRequest request, UserInfo receiver)
+    {
+        if (ShouldEncryptAttachment(receiver))
+        {
+            if (_settings.EnableFileCompression)
+            {
+                _logger.Info($"与 {receiver.Nickname} 的附件发送已启用端到端加密，跳过 GZip 压缩。");
+            }
+
+            return ProtectFileRequest(request, receiver.UserId);
+        }
+
+        if (!_settings.EnableFileCompression)
+        {
+            return request with { Protection = null };
+        }
+
+        return request with
+        {
+            Protection = new FileTransferProtection(
+                IsEncrypted: false,
+                CompressionAlgorithm: CompressionAlgorithms.GZip,
+                ChunkSize: NetworkConstants.FileTransferBufferSize,
+                ResumeSupported: false)
+        };
+    }
+
+    private bool ShouldEncryptAttachment(UserInfo receiver)
+    {
+        return receiver.SupportsProtectedAttachments &&
+            _messageService.GetEncryptionState(receiver.UserId).IsEnabled;
+    }
+
+    private FileTransferRequest ProtectFileRequest(FileTransferRequest request, string peerUserId)
+    {
+        var key = _messageService.ExportAttachmentKey(peerUserId);
+        try
+        {
+            var metadata = new EncryptedFileTransferMetadata(
+                request.FileName,
+                request.FileSize,
+                request.IsImage,
+                request.TransferKind,
+                request.BatchId,
+                request.BatchName,
+                request.RelativePath,
+                request.Items,
+                request.GroupName,
+                request.GroupKind,
+                request.GroupMemberUserIds,
+                request.GroupMessageId);
+            var metadataJson = JsonSerializer.Serialize(metadata, LanTalkJsonContext.Default.EncryptedFileTransferMetadata);
+            var payload = ProtectedFileTransfer.EncryptMetadata(key, request.FileId, metadataJson);
+
+            return request with
+            {
+                FileName = GetProtectedDisplayName(request),
+                BatchName = request.IsBatchTransfer ? "已加密附件批次" : request.BatchName,
+                RelativePath = null,
+                Items = null,
+                IsImage = false,
+                Protection = new FileTransferProtection(
+                    IsEncrypted: true,
+                    CompressionAlgorithm: CompressionAlgorithms.None,
+                    ChunkSize: NetworkConstants.FileTransferBufferSize,
+                    ResumeSupported: false,
+                    MetadataPayload: payload)
+            };
+        }
+        finally
+        {
+            CryptographicOperations.ZeroMemory(key);
+        }
+    }
+
+    private FileTransferRequest ResolveIncomingFileRequest(string senderUserId, FileTransferRequest request)
+    {
+        if (!request.IsEncryptedTransfer || request.Protection?.MetadataPayload is null)
+        {
+            return request;
+        }
+
+        var key = _messageService.ExportAttachmentKey(senderUserId);
+        try
+        {
+            var metadataJson = ProtectedFileTransfer.DecryptMetadata(key, request.FileId, request.Protection.MetadataPayload);
+            var metadata = JsonSerializer.Deserialize(metadataJson, LanTalkJsonContext.Default.EncryptedFileTransferMetadata);
+            if (metadata is null)
+            {
+                throw new InvalidOperationException("附件元数据解密后为空。");
+            }
+
+            return request with
+            {
+                FileName = metadata.FileName,
+                FileSize = metadata.FileSize,
+                IsImage = metadata.IsImage,
+                TransferKind = metadata.TransferKind,
+                BatchId = metadata.BatchId,
+                BatchName = metadata.BatchName,
+                RelativePath = metadata.RelativePath,
+                Items = metadata.Items,
+                GroupName = metadata.GroupName,
+                GroupKind = metadata.GroupKind,
+                GroupMemberUserIds = metadata.GroupMemberUserIds,
+                GroupMessageId = metadata.GroupMessageId
+            };
+        }
+        finally
+        {
+            CryptographicOperations.ZeroMemory(key);
+        }
+    }
+
+    private static string GetProtectedDisplayName(FileTransferRequest request)
+    {
+        if (request.IsBatchTransfer)
+        {
+            return "已加密附件批次";
+        }
+
+        return request.IsImage ? "已加密图片" : "已加密文件";
+    }
+
+    private async Task<string> PrepareSourcePathForTransferAsync(string sourcePath, FileTransferRequest request, CancellationToken cancellationToken = default)
+    {
+        if (!request.UsesCompression)
+        {
+            return sourcePath;
+        }
+
+        var tempPath = Path.Combine(
+            Path.GetTempPath(),
+            $"LanTalk.{request.FileId}.{Path.GetFileName(sourcePath)}.gz");
+
+        await using var source = File.OpenRead(sourcePath);
+        await using var destination = File.Create(tempPath);
+        var compressor = CompressorFactory.Create(request.Protection?.CompressionAlgorithm);
+        await compressor.CompressAsync(source, destination, cancellationToken).ConfigureAwait(false);
+        return tempPath;
+    }
+
+    private static void TryDeleteTempFile(string? path)
+    {
+        if (string.IsNullOrWhiteSpace(path) || !File.Exists(path))
+        {
+            return;
+        }
+
+        try
+        {
+            File.Delete(path);
+        }
+        catch
+        {
+        }
+    }
+
+    private static bool IsResumeSupported(FileTransferRequest request)
+    {
+        return request.Protection?.ResumeSupported != false;
+    }
+
+    private FileTransferSendOptions? CreateFileTransferSendOptions(
+        FileTransferRequest request,
+        UserInfo receiver,
+        out byte[]? encryptionKey)
+    {
+        encryptionKey = null;
+
+        if (!request.IsEncryptedTransfer)
+        {
+            return request.Protection is { ChunkSize: > 0 } protection
+                ? new FileTransferSendOptions { ChunkSize = protection.ChunkSize }
+                : null;
+        }
+
+        encryptionKey = _messageService.ExportAttachmentKey(receiver.UserId);
+        return new FileTransferSendOptions
+        {
+            EncryptionKey = encryptionKey,
+            ChunkSize = request.Protection?.ChunkSize ?? NetworkConstants.FileTransferBufferSize
+        };
+    }
+
+    private async Task<long> SendPreparedFileAsync(
+        UserInfo receiver,
+        string fileId,
+        string sourcePath,
+        FileTransferRequest request,
+        IProgress<double>? progress,
+        long resumeOffset,
+        CancellationToken cancellationToken = default)
+    {
+        var actualResumeOffset = IsResumeSupported(request) ? resumeOffset : 0;
+        var preparedPath = await PrepareSourcePathForTransferAsync(sourcePath, request, cancellationToken).ConfigureAwait(false);
+        var cleanupPreparedPath = !string.Equals(preparedPath, sourcePath, StringComparison.OrdinalIgnoreCase);
+        byte[]? encryptionKey = null;
+
+        try
+        {
+            var options = CreateFileTransferSendOptions(request, receiver, out encryptionKey);
+            await _fileTransferService.SendFileAsync(
+                receiver.IpAddress,
+                receiver.FilePort,
+                fileId,
+                preparedPath,
+                progress,
+                actualResumeOffset,
+                options,
+                cancellationToken).ConfigureAwait(false);
+
+            var preparedLength = new FileInfo(preparedPath).Length;
+            return request.IsEncryptedTransfer
+                ? ProtectedFileTransfer.GetEncryptedWireSize(
+                    preparedLength,
+                    request.Protection?.ChunkSize ?? NetworkConstants.FileTransferBufferSize)
+                : preparedLength;
+        }
+        finally
+        {
+            if (encryptionKey is not null)
+            {
+                CryptographicOperations.ZeroMemory(encryptionKey);
+            }
+
+            if (cleanupPreparedPath)
+            {
+                TryDeleteTempFile(preparedPath);
+            }
+        }
+    }
+
+    private async Task FinalizeIncomingCompressedFileAsync(string fileId, FileTransferRequest request, CancellationToken cancellationToken)
+    {
+        if (!_incomingCompressedTempPaths.TryGetValue(fileId, out var compressedPath) ||
+            !_incomingSavePaths.TryGetValue(fileId, out var finalPath))
+        {
+            return;
+        }
+
+        try
+        {
+            await using var source = File.OpenRead(compressedPath);
+            await using var destination = new FileStream(finalPath, FileMode.Create, FileAccess.Write, FileShare.Read);
+            var compressor = CompressorFactory.Create(request.Protection?.CompressionAlgorithm);
+            await compressor.DecompressAsync(source, destination, cancellationToken).ConfigureAwait(false);
+        }
+        finally
+        {
+            _incomingCompressedTempPaths.Remove(fileId);
+            TryDeleteTempFile(compressedPath);
+        }
     }
 
     private static string? ValidatePorts(SettingsViewModel settings)
@@ -1650,6 +2007,11 @@ public sealed partial class MainWindowViewModel : ViewModelBase
         try
         {
             _settings = await _settingsService.LoadAsync();
+            if (_startupRegistrationService.IsSupported)
+            {
+                _settings.LaunchOnStartup = _startupRegistrationService.IsEnabled();
+            }
+
             AppThemeService.Apply(_settings);
             LocalNickname = _settings.Nickname;
             OnPropertyChanged(nameof(LocalAvatarBrush));
@@ -1949,9 +2311,21 @@ public sealed partial class MainWindowViewModel : ViewModelBase
 
     private async Task HandleFileRequestAsync(NetworkPacket packet)
     {
-        var request = System.Text.Json.JsonSerializer.Deserialize(packet.PayloadJson, LanTalkJsonContext.Default.FileTransferRequest);
-        if (request is null)
+        var restoredRequest = System.Text.Json.JsonSerializer.Deserialize(packet.PayloadJson, LanTalkJsonContext.Default.FileTransferRequest);
+        if (restoredRequest is null)
         {
+            return;
+        }
+
+        FileTransferRequest request;
+        try
+        {
+            request = ResolveIncomingFileRequest(packet.FromUserId, restoredRequest);
+        }
+        catch (Exception ex) when (ex is InvalidOperationException or JsonException or FormatException or CryptographicException)
+        {
+            _logger.Error("附件请求解析失败。", ex);
+            StatusMessage = $"附件请求解析失败：{ex.Message}";
             return;
         }
 
@@ -2249,7 +2623,7 @@ public sealed partial class MainWindowViewModel : ViewModelBase
             }
 
             Directory.CreateDirectory(Path.GetDirectoryName(savePath) ?? saveRoot);
-            var resumeOffset = GetResumeOffset(savePath, item.FileSize);
+            var resumeOffset = IsResumeSupported(request) ? GetResumeOffset(savePath, item.FileSize) : 0;
             resumeItems.Add(new FileTransferResumeItem(item.FileId, resumeOffset));
             state?.MarkProgress(item.FileId, item.FileSize == 0 ? 100 : resumeOffset * 100d / item.FileSize);
             await SaveBatchRecordAsync(
@@ -2356,7 +2730,8 @@ public sealed partial class MainWindowViewModel : ViewModelBase
         }
 
         if (!_outgoingFilePaths.TryGetValue(response.FileId, out var path) ||
-            !_outgoingFileReceivers.TryGetValue(response.FileId, out var receiver))
+            !_outgoingFileReceivers.TryGetValue(response.FileId, out var receiver) ||
+            !_outgoingFileRequests.TryGetValue(response.FileId, out var request))
         {
             fileMessage.StatusText = "文件路径丢失";
             if (_outgoingGroupFileStates.TryGetValue(response.FileId, out var missingPathGroupState))
@@ -2373,7 +2748,9 @@ public sealed partial class MainWindowViewModel : ViewModelBase
         groupState?.MarkAccepted(response.FileId);
         fileMessage.StatusText = groupState is null ? "正在传输" : groupState.BuildStatus();
         var sourceLength = new FileInfo(path).Exists ? new FileInfo(path).Length : 0;
-        var resumeOffset = Math.Clamp(response.ResumeOffset, 0, sourceLength);
+        var resumeOffset = IsResumeSupported(request)
+            ? Math.Clamp(response.ResumeOffset, 0, sourceLength)
+            : 0;
         await SaveOutgoingFileStatusAsync(response.FileId, FileTransferStatus.Transferring, resumeOffset);
 
         try
@@ -2391,7 +2768,13 @@ public sealed partial class MainWindowViewModel : ViewModelBase
             });
 
             _logger.Info($"开始发送文件：{fileMessage.FileName} -> {receiver.Nickname}({receiver.UserId})，续传偏移 {resumeOffset}。");
-            await _fileTransferService.SendFileAsync(receiver.IpAddress, receiver.FilePort, response.FileId, path, progress, resumeOffset);
+            var transferredLength = await SendPreparedFileAsync(
+                receiver,
+                response.FileId,
+                path,
+                request,
+                progress,
+                resumeOffset).ConfigureAwait(false);
             if (groupState is null)
             {
                 fileMessage.Progress = 100;
@@ -2404,7 +2787,7 @@ public sealed partial class MainWindowViewModel : ViewModelBase
                 StatusMessage = $"群组附件已发送给一名成员，等待接收确认：{fileMessage.FileName}";
             }
 
-            await SaveOutgoingFileStatusAsync(response.FileId, FileTransferStatus.Transferring, sourceLength);
+            await SaveOutgoingFileStatusAsync(response.FileId, FileTransferStatus.Transferring, transferredLength);
         }
         catch (Exception ex)
         {
@@ -2503,7 +2886,9 @@ public sealed partial class MainWindowViewModel : ViewModelBase
         foreach (var item in batchTransfer.Items)
         {
             var resumeOffset = resumeOffsets.GetValueOrDefault(item.FileId);
-            resumeOffset = Math.Clamp(resumeOffset, 0, item.FileSize);
+            resumeOffset = IsResumeSupported(batchTransfer.Request)
+                ? Math.Clamp(resumeOffset, 0, item.FileSize)
+                : 0;
             var progress = new Progress<double>(value =>
             {
                 batchTransfer.State.MarkProgress(item.FileId, value);
@@ -2514,13 +2899,14 @@ public sealed partial class MainWindowViewModel : ViewModelBase
             {
                 await SaveOutgoingFileStatusAsync(item.FileId, FileTransferStatus.Transferring, resumeOffset);
                 _logger.Info($"开始发送{GetTransferKindText(batchTransfer.TransferKind)}项：{item.FileName} -> {batchTransfer.Receiver.Nickname}({batchTransfer.Receiver.UserId})，续传偏移 {resumeOffset}。");
-                await _fileTransferService.SendFileAsync(
-                    batchTransfer.Receiver.IpAddress,
-                    batchTransfer.Receiver.FilePort,
+                var transferredLength = await SendPreparedFileAsync(
+                    batchTransfer.Receiver,
                     item.FileId,
                     item.SourcePath,
+                    batchTransfer.Request,
                     progress,
-                    resumeOffset);
+                    resumeOffset).ConfigureAwait(false);
+                await SaveOutgoingFileStatusAsync(item.FileId, FileTransferStatus.Transferring, transferredLength);
                 batchTransfer.Message.StatusText = batchTransfer.State.BuildStatus();
             }
             catch (Exception ex)
@@ -2863,6 +3249,7 @@ public sealed partial class MainWindowViewModel : ViewModelBase
         existing.IpAddress = user.IpAddress;
         existing.MessagePort = user.MessagePort;
         existing.FilePort = user.FilePort;
+        existing.SupportsProtectedAttachments = user.SupportsProtectedAttachments;
         existing.Status = user.Status;
 
         if (previousStatus != user.Status || !string.Equals(previousIpAddress, user.IpAddress, StringComparison.Ordinal))
@@ -3159,6 +3546,7 @@ public sealed partial class MainWindowViewModel : ViewModelBase
             IpAddress = string.Empty,
             MessagePort = _settings.MessagePort,
             FilePort = _settings.FilePort,
+            SupportsProtectedAttachments = false,
             Status = UserStatus.Offline,
             LastSeenTime = DateTimeOffset.Now
         };
@@ -3512,6 +3900,7 @@ public sealed partial class MainWindowViewModel : ViewModelBase
         var message = EnsureOutgoingFileMessageForRetry(request, record.SourcePath);
         _outgoingFilePaths[request.FileId] = record.SourcePath;
         _outgoingFileReceivers[request.FileId] = receiver;
+        _outgoingFileRequests[request.FileId] = request;
         _outgoingFileMessages[request.FileId] = message;
 
         try
@@ -3570,7 +3959,7 @@ public sealed partial class MainWindowViewModel : ViewModelBase
 
         _outgoingFileMessages[request.FileId] = message;
         _outgoingFileReceivers[request.FileId] = receiver;
-        _outgoingBatchTransfers[request.FileId] = new OutgoingBatchTransfer(request.FileId, receiver, outgoingItems, message, state, request.TransferKind);
+        _outgoingBatchTransfers[request.FileId] = new OutgoingBatchTransfer(request.FileId, receiver, request, outgoingItems, message, state, request.TransferKind);
 
         if (!string.IsNullOrWhiteSpace(request.GroupId) && SelectedUser?.UserId == request.GroupId)
         {
@@ -3972,12 +4361,19 @@ public sealed partial class MainWindowViewModel : ViewModelBase
         var request = _pendingFileRequests.GetValueOrDefault(fileId);
         var fileName = request?.FileName ?? $"{fileId}.bin";
         var savePath = _incomingSavePaths.GetValueOrDefault(fileId) ?? Path.Combine(_settings.FileSavePath, fileName);
+        var workingPath = savePath;
+        if (request?.UsesCompression == true)
+        {
+            workingPath = Path.Combine(Path.GetTempPath(), $"LanTalk.receive.{fileId}.{Path.GetFileName(savePath)}.payload");
+            _incomingCompressedTempPaths[fileId] = workingPath;
+        }
+
         _incomingSavePaths[fileId] = savePath;
 
         try
         {
-            Directory.CreateDirectory(Path.GetDirectoryName(savePath) ?? _settings.FileSavePath);
-            var stream = new FileStream(savePath, FileMode.OpenOrCreate, FileAccess.Write, FileShare.Read);
+            Directory.CreateDirectory(Path.GetDirectoryName(workingPath) ?? _settings.FileSavePath);
+            var stream = new FileStream(workingPath, FileMode.OpenOrCreate, FileAccess.Write, FileShare.Read);
             if (resumeOffset == 0)
             {
                 stream.SetLength(0);
@@ -4003,9 +4399,33 @@ public sealed partial class MainWindowViewModel : ViewModelBase
                 });
             }
 
+            if (request?.IsEncryptedTransfer == true)
+            {
+                if (resumeOffset > 0)
+                {
+                    stream.Dispose();
+                    throw new IOException("加密附件暂不支持断点续传。");
+                }
+
+                var key = _messageService.ExportAttachmentKey(request.SenderId);
+                try
+                {
+                    return ProtectedFileTransfer.CreateDecryptingWriteStream(
+                        stream,
+                        fileId,
+                        request.FileSize,
+                        key,
+                        request.Protection?.ChunkSize ?? NetworkConstants.FileTransferBufferSize);
+                }
+                finally
+                {
+                    CryptographicOperations.ZeroMemory(key);
+                }
+            }
+
             return stream;
         }
-        catch (Exception ex) when (IsFileSaveException(ex))
+        catch (Exception ex) when (IsFileSaveException(ex) || ex is CryptographicException or InvalidOperationException)
         {
             _logger.Error("文件保存失败。", ex);
             await MarkIncomingFileFailedAsync(fileId, $"文件保存失败：{ex.Message}", cancellationToken);
@@ -4016,6 +4436,7 @@ public sealed partial class MainWindowViewModel : ViewModelBase
     private async Task UpdateReceiveProgressAsync(string fileId, double progress, CancellationToken cancellationToken)
     {
         var batchState = _incomingBatchStates.GetValueOrDefault(fileId);
+        var request = _pendingFileRequests.GetValueOrDefault(fileId);
         if (_incomingFileMessages.TryGetValue(fileId, out var message))
         {
             await Dispatcher.UIThread.InvokeAsync(() =>
@@ -4036,16 +4457,37 @@ public sealed partial class MainWindowViewModel : ViewModelBase
                     message.StatusText = progress >= 100 ? "接收完成" : $"正在接收 {progress:0}%";
                 }
 
-                if (progress >= 100 && _incomingSavePaths.TryGetValue(fileId, out var savePath))
+                if (progress >= 100 &&
+                    request?.UsesCompression != true &&
+                    _incomingSavePaths.TryGetValue(fileId, out var savePath))
                 {
                     message.SetImagePath(savePath);
                 }
             });
         }
 
-        if (progress >= 100 && _pendingFileRequests.TryGetValue(fileId, out var request))
+        if (progress >= 100 && request is not null)
         {
-            await SaveIncomingFileStatusAsync(fileId, FileTransferStatus.Completed, cancellationToken);
+            try
+            {
+                if (request.UsesCompression)
+                {
+                    await FinalizeIncomingCompressedFileAsync(fileId, request, cancellationToken).ConfigureAwait(false);
+                    if (_incomingFileMessages.TryGetValue(fileId, out var completedMessage) &&
+                        _incomingSavePaths.TryGetValue(fileId, out var savePath))
+                    {
+                        await Dispatcher.UIThread.InvokeAsync(() => completedMessage.SetImagePath(savePath));
+                    }
+                }
+
+                await SaveIncomingFileStatusAsync(fileId, FileTransferStatus.Completed, cancellationToken).ConfigureAwait(false);
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or DirectoryNotFoundException or NotSupportedException or ArgumentException or InvalidDataException or CryptographicException)
+            {
+                _logger.Error("接收后的附件处理失败。", ex);
+                await MarkIncomingFileFailedAsync(fileId, $"附件处理失败：{ex.Message}", cancellationToken).ConfigureAwait(false);
+                return;
+            }
 
             UserInfo? sender = null;
             await Dispatcher.UIThread.InvokeAsync(() =>
@@ -4280,6 +4722,7 @@ public sealed partial class MainWindowViewModel : ViewModelBase
             IpAddress = user.IpAddress,
             MessagePort = user.MessagePort,
             FilePort = user.FilePort,
+            SupportsProtectedAttachments = user.SupportsProtectedAttachments,
             Status = user.Status,
             LastSeenTime = DateTimeOffset.Now
         };
@@ -4290,6 +4733,7 @@ public sealed partial class MainWindowViewModel : ViewModelBase
         var logger = new ConsoleLanTalkLogger();
         var settingsService = new SettingsService(logger);
         var connectionFactory = new SqliteConnectionFactory();
+        var startupRegistrationService = new WindowsStartupRegistrationService();
         var historyService = new ChatHistoryService(new MessageRepository(connectionFactory));
         var registry = new OnlineUserRegistry();
         var discoveryServer = new UdpDiscoveryServer(logger);
@@ -4302,7 +4746,7 @@ public sealed partial class MainWindowViewModel : ViewModelBase
         var fileTransferService = new FileTransferService();
         var fileServer = new TcpFileServer(logger);
 
-        return new AppServices(settingsService, historyService, discoveryService, messageService, fileTransferService, fileTransferRepository, userRepository, groupRepository, outgoingDeliveryRepository, fileServer, logger);
+        return new AppServices(settingsService, startupRegistrationService, historyService, discoveryService, messageService, fileTransferService, fileTransferRepository, userRepository, groupRepository, outgoingDeliveryRepository, fileServer, logger);
     }
 
     private static async Task<IReadOnlyList<string>> PickFilesAsync()
@@ -4364,6 +4808,105 @@ public sealed partial class MainWindowViewModel : ViewModelBase
         });
 
         return files.Count == 0 ? null : files[0].Path.LocalPath;
+    }
+
+    private static async Task<string?> PickSaveFileAsync(
+        string title,
+        string suggestedFileName,
+        IReadOnlyList<FilePickerFileType> fileTypes,
+        string defaultExtension)
+    {
+        if (Avalonia.Application.Current?.ApplicationLifetime is not IClassicDesktopStyleApplicationLifetime desktop ||
+            desktop.MainWindow is null)
+        {
+            return null;
+        }
+
+        var file = await desktop.MainWindow.StorageProvider.SaveFilePickerAsync(new FilePickerSaveOptions
+        {
+            Title = title,
+            SuggestedFileName = suggestedFileName,
+            FileTypeChoices = fileTypes,
+            DefaultExtension = defaultExtension
+        });
+
+        return file?.Path.LocalPath;
+    }
+
+    private static async Task ExportMessagesAsJsonAsync(string exportPath, IReadOnlyList<ChatMessage> messages, CancellationToken cancellationToken = default)
+    {
+        await using var stream = File.Create(exportPath);
+        await JsonSerializer.SerializeAsync(
+            stream,
+            messages,
+            typeof(IReadOnlyList<ChatMessage>),
+            LanTalkJsonContext.Default,
+            cancellationToken).ConfigureAwait(false);
+    }
+
+    private static async Task ExportMessagesAsCsvAsync(string exportPath, IReadOnlyList<ChatMessage> messages, CancellationToken cancellationToken = default)
+    {
+        await using var stream = File.Create(exportPath);
+        await using var writer = new StreamWriter(stream, new UTF8Encoding(encoderShouldEmitUTF8Identifier: true));
+        await writer.WriteLineAsync("MessageId,SessionId,SenderId,ReceiverId,Kind,Content,SendTime,IsMine,IsRead,ReadByCount,ReadTargetCount,ReadTime,IsRecalled,RecalledTime");
+
+        foreach (var message in messages)
+        {
+            await writer.WriteLineAsync(string.Join(",",
+                EscapeCsv(message.MessageId),
+                EscapeCsv(message.SessionId),
+                EscapeCsv(message.SenderId),
+                EscapeCsv(message.ReceiverId),
+                EscapeCsv(message.Kind.ToString()),
+                EscapeCsv(message.Content),
+                EscapeCsv(message.SendTime.ToString("O")),
+                EscapeCsv(message.IsMine),
+                EscapeCsv(message.IsRead),
+                EscapeCsv(message.ReadByCount),
+                EscapeCsv(message.ReadTargetCount),
+                EscapeCsv(message.ReadTime?.ToString("O")),
+                EscapeCsv(message.IsRecalled),
+                EscapeCsv(message.RecalledTime?.ToString("O"))));
+        }
+
+        await writer.FlushAsync(cancellationToken).ConfigureAwait(false);
+    }
+
+    private static async Task ExportFileTransfersAsCsvAsync(string exportPath, IReadOnlyList<FileTransferRecord> records, CancellationToken cancellationToken = default)
+    {
+        await using var stream = File.Create(exportPath);
+        await using var writer = new StreamWriter(stream, new UTF8Encoding(encoderShouldEmitUTF8Identifier: true));
+        await writer.WriteLineAsync("FileId,SenderId,ReceiverId,FileName,FileSize,BytesTransferred,Status,TransferKind,BatchId,RelativePath,SavePath,TransferTime");
+
+        foreach (var record in records)
+        {
+            await writer.WriteLineAsync(string.Join(",",
+                EscapeCsv(record.FileId),
+                EscapeCsv(record.SenderId),
+                EscapeCsv(record.ReceiverId),
+                EscapeCsv(record.FileName),
+                EscapeCsv(record.FileSize),
+                EscapeCsv(record.BytesTransferred),
+                EscapeCsv(record.Status.ToString()),
+                EscapeCsv(record.TransferKind.ToString()),
+                EscapeCsv(record.BatchId),
+                EscapeCsv(record.RelativePath),
+                EscapeCsv(record.SavePath),
+                EscapeCsv(record.TransferTime.ToString("O"))));
+        }
+
+        await writer.FlushAsync(cancellationToken).ConfigureAwait(false);
+    }
+
+    private static string EscapeCsv(object? value)
+    {
+        if (value is null)
+        {
+            return "\"\"";
+        }
+
+        var text = Convert.ToString(value) ?? string.Empty;
+        return $"\"{text.Replace("\"", "\"\"", StringComparison.Ordinal)}\"";
     }
 
     private ChatMessage CreateImageChatMessage(
@@ -4797,6 +5340,7 @@ public sealed partial class MainWindowViewModel : ViewModelBase
     private sealed record OutgoingBatchTransfer(
         string BatchId,
         UserInfo Receiver,
+        FileTransferRequest Request,
         IReadOnlyList<OutgoingBatchItem> Items,
         ChatMessageViewModel Message,
         FileBatchTransferState State,
@@ -4979,6 +5523,7 @@ public sealed partial class MainWindowViewModel : ViewModelBase
 
 public sealed record AppServices(
     SettingsService SettingsService,
+    IStartupRegistrationService StartupRegistrationService,
     ChatHistoryService ChatHistoryService,
     DiscoveryService DiscoveryService,
     MessageService MessageService,

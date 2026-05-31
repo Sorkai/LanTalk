@@ -22,6 +22,12 @@ public sealed class AppSettings
 
     public bool SaveChatHistory { get; set; } = true;
 
+    public bool PreferSystemNotifications { get; set; } = true;
+
+    public bool EnableFileCompression { get; set; }
+
+    public bool LaunchOnStartup { get; set; }
+
     public string ThemeMode { get; set; } = "System";
 
     public string ThemeColor { get; set; } = "Blue";

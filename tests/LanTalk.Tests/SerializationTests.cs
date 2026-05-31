@@ -94,6 +94,18 @@ public sealed class SerializationTests
     }
 
     [Fact]
+    public void DiscoveryPayload_ShouldRoundTripProtectedAttachmentCapability()
+    {
+        var payload = new DiscoveryPayload("user-a", "张同学", 50001, 50002, "研发部", SupportsProtectedAttachments: true);
+
+        var json = JsonSerializer.Serialize(payload, LanTalkJsonContext.Default.DiscoveryPayload);
+        var restored = JsonSerializer.Deserialize(json, LanTalkJsonContext.Default.DiscoveryPayload);
+
+        Assert.NotNull(restored);
+        Assert.True(restored.SupportsProtectedAttachments);
+    }
+
+    [Fact]
     public void FileTransferRequest_ShouldRoundTripGroupMetadata()
     {
         var request = new FileTransferRequest(
@@ -153,6 +165,38 @@ public sealed class SerializationTests
         Assert.Equal(2, restored.TransferItems.Count);
         Assert.Contains(restored.TransferItems, item => item.IsDirectory && item.RelativePath == "docs");
         Assert.Contains(restored.TransferItems, item => item.FileId == "file-a" && item.FileSize == 4096);
+    }
+
+    [Fact]
+    public void FileTransferRequest_ShouldRoundTripProtectionMetadata()
+    {
+        var request = new FileTransferRequest(
+            "file-protected",
+            "已加密文件",
+            2048,
+            "user-a",
+            "user-b",
+            50002,
+            Protection: new FileTransferProtection(
+                IsEncrypted: true,
+                CompressionAlgorithm: "none",
+                ChunkSize: 65536,
+                ResumeSupported: false,
+                MetadataPayload: new EncryptedMessagePayload(
+                    "FILE-METADATA-AES-256-GCM",
+                    "metadata",
+                    Convert.ToBase64String(new byte[] { 1, 2, 3 }),
+                    Convert.ToBase64String(new byte[] { 4, 5, 6 }),
+                    Convert.ToBase64String(new byte[] { 7, 8, 9 }))));
+
+        var json = JsonSerializer.Serialize(request, LanTalkJsonContext.Default.FileTransferRequest);
+        var restored = JsonSerializer.Deserialize(json, LanTalkJsonContext.Default.FileTransferRequest);
+
+        Assert.NotNull(restored);
+        Assert.True(restored.IsProtectedTransfer);
+        Assert.True(restored.IsEncryptedTransfer);
+        Assert.False(restored.Protection?.ResumeSupported);
+        Assert.NotNull(restored.Protection?.MetadataPayload);
     }
 
     [Fact]

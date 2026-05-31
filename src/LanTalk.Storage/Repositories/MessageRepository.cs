@@ -119,6 +119,42 @@ public sealed class MessageRepository
         return messages;
     }
 
+    public async Task<IReadOnlyList<ChatMessage>> LoadMessagesForExportAsync(
+        string sessionId,
+        DateTimeOffset? startTime = null,
+        DateTimeOffset? endTime = null,
+        CancellationToken cancellationToken = default)
+    {
+        await using var connection = _connectionFactory.CreateConnection();
+        await connection.OpenAsync(cancellationToken).ConfigureAwait(false);
+
+        await using var command = connection.CreateCommand();
+        command.CommandText =
+            """
+            SELECT MessageId, SessionId, SenderId, ReceiverId, MessageType, Content, SendTime, IsMine,
+                   IsRead, ReadTime, ReadTargetCount, IsRecalled, RecalledTime,
+                   (SELECT COUNT(*) FROM MessageReadReceipts receipts WHERE receipts.MessageId = ChatMessages.MessageId) AS ReadByCount
+            FROM ChatMessages
+            WHERE SessionId = $sessionId
+              AND ($startTime IS NULL OR SendTime >= $startTime)
+              AND ($endTime IS NULL OR SendTime <= $endTime)
+            ORDER BY SendTime;
+            """;
+        command.Parameters.AddWithValue("$sessionId", sessionId);
+        command.Parameters.AddWithValue("$startTime", startTime?.ToString("O") ?? (object)DBNull.Value);
+        command.Parameters.AddWithValue("$endTime", endTime?.ToString("O") ?? (object)DBNull.Value);
+
+        var messages = new List<ChatMessage>();
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
+
+        while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false))
+        {
+            messages.Add(ReadMessage(reader));
+        }
+
+        return messages;
+    }
+
     public async Task<IReadOnlyList<ChatMessage>> MarkSessionIncomingMessagesReadAsync(
         string sessionId,
         DateTimeOffset readTime,

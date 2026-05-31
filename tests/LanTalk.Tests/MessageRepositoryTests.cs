@@ -208,6 +208,33 @@ public sealed class MessageRepositoryTests
         File.Delete(databasePath);
     }
 
+    [Fact]
+    public async Task LoadMessagesForExportAsync_ShouldReturnChronologicalMessages()
+    {
+        var databasePath = Path.Combine(Path.GetTempPath(), $"lantalk-export-{Guid.NewGuid():N}.db");
+        var factory = new SqliteConnectionFactory(databasePath);
+        var initializer = new DatabaseInitializer(factory);
+        var repository = new MessageRepository(factory);
+        var firstTime = DateTimeOffset.Parse("2026-06-01T09:00:00+08:00");
+        var secondTime = firstTime.AddMinutes(5);
+
+        await initializer.InitializeAsync();
+        await repository.SaveAsync(CreateMessage("session-export", "user-a", "第一条", firstTime, "message-1"));
+        await repository.SaveAsync(CreateMessage("session-export", "user-b", "第二条", secondTime, "message-2"));
+
+        var results = await repository.LoadMessagesForExportAsync(
+            "session-export",
+            firstTime.AddMinutes(-1),
+            secondTime.AddMinutes(1));
+
+        Assert.Equal(2, results.Count);
+        Assert.Equal("message-1", results[0].MessageId);
+        Assert.Equal("message-2", results[1].MessageId);
+
+        SqliteConnection.ClearAllPools();
+        File.Delete(databasePath);
+    }
+
     private static ChatMessage CreateMessage(string sessionId, string senderId, string content, DateTimeOffset sendTime, string? messageId = null)
     {
         return new ChatMessage

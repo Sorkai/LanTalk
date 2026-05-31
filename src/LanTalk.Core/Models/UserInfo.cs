@@ -17,6 +17,8 @@ public sealed class UserInfo
 
     public int FilePort { get; init; }
 
+    public bool SupportsProtectedAttachments { get; init; }
+
     public UserStatus Status { get; init; }
 
     public DateTimeOffset LastSeenTime { get; set; }

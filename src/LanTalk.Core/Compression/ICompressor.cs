@@ -2,8 +2,9 @@ namespace LanTalk.Core.Compression;
 
 public interface ICompressor
 {
-    Stream Compress(Stream source);
+    string Algorithm { get; }
 
-    Stream Decompress(Stream source);
+    Task CompressAsync(Stream source, Stream destination, CancellationToken cancellationToken = default);
+
+    Task DecompressAsync(Stream source, Stream destination, CancellationToken cancellationToken = default);
 }
-

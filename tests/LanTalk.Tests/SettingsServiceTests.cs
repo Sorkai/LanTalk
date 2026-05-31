@@ -31,12 +31,15 @@ public sealed class SettingsServiceTests
         settings.Department = "研发部";
         settings.FileSavePath = Path.Combine(Path.GetTempPath(), "LanTalkFiles");
         settings.SaveChatHistory = false;
+        settings.PreferSystemNotifications = false;
         settings.ThemeMode = "Dark";
         settings.ThemeColor = "Blue";
         settings.UdpPort = 50010;
         settings.MessagePort = 50011;
         settings.FilePort = 50012;
         settings.DiscoverySubnet = "192.168.8.32/24";
+        settings.EnableFileCompression = true;
+        settings.LaunchOnStartup = true;
 
         await service.SaveAsync(settings);
         var loaded = await service.LoadAsync();
@@ -46,11 +49,14 @@ public sealed class SettingsServiceTests
         Assert.Equal("研发部", loaded.Department);
         Assert.Equal(settings.FileSavePath, loaded.FileSavePath);
         Assert.False(loaded.SaveChatHistory);
+        Assert.False(loaded.PreferSystemNotifications);
         Assert.Equal("Dark", loaded.ThemeMode);
         Assert.Equal(50010, loaded.UdpPort);
         Assert.Equal(50011, loaded.MessagePort);
         Assert.Equal(50012, loaded.FilePort);
         Assert.Equal("192.168.8.0/24", loaded.DiscoverySubnet);
+        Assert.True(loaded.EnableFileCompression);
+        Assert.True(loaded.LaunchOnStartup);
     }
 
     [Fact]

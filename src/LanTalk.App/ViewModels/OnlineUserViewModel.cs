@@ -28,6 +28,9 @@ public sealed partial class OnlineUserViewModel : ViewModelBase
     private int filePort = 50002;
 
     [ObservableProperty]
+    private bool supportsProtectedAttachments;
+
+    [ObservableProperty]
     private UserStatus status;
 
     [ObservableProperty]
@@ -125,6 +128,7 @@ public sealed partial class OnlineUserViewModel : ViewModelBase
             IpAddress = user.IpAddress,
             MessagePort = user.MessagePort,
             FilePort = user.FilePort,
+            SupportsProtectedAttachments = user.SupportsProtectedAttachments,
             Status = user.Status,
             LastActiveTime = user.LastSeenTime,
             LastMessage = user.Status == UserStatus.Online ? "可以开始聊天" : "等待重新上线"

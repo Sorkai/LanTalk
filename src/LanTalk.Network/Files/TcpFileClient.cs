@@ -17,12 +17,19 @@ public sealed class TcpFileClient
         string sourcePath,
         IProgress<double>? progress = null,
         long resumeOffset = 0,
+        FileTransferSendOptions? options = null,
         CancellationToken cancellationToken = default)
     {
         var fileInfo = new FileInfo(sourcePath);
         if (!fileInfo.Exists)
         {
             throw new FileNotFoundException("要发送的文件不存在。", sourcePath);
+        }
+
+        var useEncryption = options?.EncryptionKey is { Length: > 0 };
+        if (useEncryption && resumeOffset > 0)
+        {
+            throw new InvalidOperationException("当前加密附件传输暂不支持断点续传。");
         }
 
         if (resumeOffset < 0 || resumeOffset > fileInfo.Length)
@@ -39,11 +46,30 @@ public sealed class TcpFileClient
         await networkStream.WriteAsync(BitConverter.GetBytes(FileStreamHeaderVersion), cancellationToken).ConfigureAwait(false);
         await networkStream.WriteAsync(BitConverter.GetBytes(fileIdBytes.Length), cancellationToken).ConfigureAwait(false);
         await networkStream.WriteAsync(fileIdBytes, cancellationToken).ConfigureAwait(false);
-        await networkStream.WriteAsync(BitConverter.GetBytes(fileInfo.Length), cancellationToken).ConfigureAwait(false);
-        await networkStream.WriteAsync(BitConverter.GetBytes(resumeOffset), cancellationToken).ConfigureAwait(false);
+        var chunkSize = options?.ChunkSize ?? NetworkConstants.FileTransferBufferSize;
+        var wireSize = useEncryption
+            ? ProtectedFileTransfer.GetEncryptedWireSize(fileInfo.Length, chunkSize)
+            : fileInfo.Length;
+        await networkStream.WriteAsync(BitConverter.GetBytes(wireSize), cancellationToken).ConfigureAwait(false);
+        await networkStream.WriteAsync(BitConverter.GetBytes(useEncryption ? 0 : resumeOffset), cancellationToken).ConfigureAwait(false);
 
         await using var fileStream = File.OpenRead(sourcePath);
         fileStream.Seek(resumeOffset, SeekOrigin.Begin);
+
+        if (useEncryption)
+        {
+            await ProtectedFileTransfer.WriteEncryptedAsync(
+                fileStream,
+                networkStream,
+                fileId,
+                fileInfo.Length,
+                options!.EncryptionKey!,
+                chunkSize,
+                progress,
+                cancellationToken).ConfigureAwait(false);
+            return;
+        }
+
         var buffer = ArrayPool<byte>.Shared.Rent(NetworkConstants.FileTransferBufferSize);
         long sent = resumeOffset;
 

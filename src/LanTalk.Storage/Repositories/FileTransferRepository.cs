@@ -82,4 +82,49 @@ public sealed class FileTransferRepository
 
         return records;
     }
+
+    public async Task<IReadOnlyList<FileTransferRecord>> LoadForExportAsync(
+        DateTimeOffset? startTime = null,
+        DateTimeOffset? endTime = null,
+        CancellationToken cancellationToken = default)
+    {
+        await using var connection = _connectionFactory.CreateConnection();
+        await connection.OpenAsync(cancellationToken).ConfigureAwait(false);
+
+        await using var command = connection.CreateCommand();
+        command.CommandText =
+            """
+            SELECT FileId, SenderId, ReceiverId, FileName, FileSize, SavePath, TransferKind, BatchId, RelativePath, BytesTransferred, Status, TransferTime
+            FROM FileTransfers
+            WHERE ($startTime IS NULL OR TransferTime >= $startTime)
+              AND ($endTime IS NULL OR TransferTime <= $endTime)
+            ORDER BY TransferTime;
+            """;
+        command.Parameters.AddWithValue("$startTime", startTime?.ToString("O") ?? (object)DBNull.Value);
+        command.Parameters.AddWithValue("$endTime", endTime?.ToString("O") ?? (object)DBNull.Value);
+
+        var records = new List<FileTransferRecord>();
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
+
+        while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false))
+        {
+            records.Add(new FileTransferRecord
+            {
+                FileId = reader.GetString(0),
+                SenderId = reader.GetString(1),
+                ReceiverId = reader.GetString(2),
+                FileName = reader.GetString(3),
+                FileSize = reader.GetInt64(4),
+                SavePath = reader.IsDBNull(5) ? null : reader.GetString(5),
+                TransferKind = Enum.Parse<FileTransferKind>(reader.GetString(6)),
+                BatchId = reader.IsDBNull(7) ? null : reader.GetString(7),
+                RelativePath = reader.IsDBNull(8) ? null : reader.GetString(8),
+                BytesTransferred = reader.GetInt64(9),
+                Status = Enum.Parse<FileTransferStatus>(reader.GetString(10)),
+                TransferTime = DateTimeOffset.Parse(reader.GetString(11))
+            });
+        }
+
+        return records;
+    }
 }

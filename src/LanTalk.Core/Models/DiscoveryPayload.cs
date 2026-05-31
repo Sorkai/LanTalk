@@ -7,4 +7,5 @@ public sealed record DiscoveryPayload(
     string Nickname,
     int MessagePort,
     int FilePort,
-    string Department = NetworkConstants.DefaultDepartment);
+    string Department = NetworkConstants.DefaultDepartment,
+    bool SupportsProtectedAttachments = false);

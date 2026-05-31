@@ -21,6 +21,15 @@ public sealed partial class SettingsViewModel : ViewModelBase
     private bool saveChatHistory = true;
 
     [ObservableProperty]
+    private bool preferSystemNotifications = true;
+
+    [ObservableProperty]
+    private bool enableFileCompression;
+
+    [ObservableProperty]
+    private bool launchOnStartup;
+
+    [ObservableProperty]
     private string themeMode = "System";
 
     [ObservableProperty]
@@ -80,6 +89,9 @@ public sealed partial class SettingsViewModel : ViewModelBase
             Department = settings.Department,
             FileSavePath = settings.FileSavePath,
             SaveChatHistory = settings.SaveChatHistory,
+            PreferSystemNotifications = settings.PreferSystemNotifications,
+            EnableFileCompression = settings.EnableFileCompression,
+            LaunchOnStartup = settings.LaunchOnStartup,
             ThemeMode = settings.ThemeMode,
             ThemeColor = settings.ThemeColor,
             UdpPort = settings.UdpPort,

@@ -20,7 +20,8 @@ public sealed record FileTransferRequest(
     string? BatchId = null,
     string? BatchName = null,
     string? RelativePath = null,
-    IReadOnlyList<FileTransferItem>? Items = null)
+    IReadOnlyList<FileTransferItem>? Items = null,
+    FileTransferProtection? Protection = null)
 {
     [JsonIgnore]
     public bool IsGroupTransfer => !string.IsNullOrWhiteSpace(GroupId);
@@ -30,4 +31,13 @@ public sealed record FileTransferRequest(
 
     [JsonIgnore]
     public IReadOnlyList<FileTransferItem> TransferItems => Items ?? [];
+
+    [JsonIgnore]
+    public bool IsProtectedTransfer => Protection is not null;
+
+    [JsonIgnore]
+    public bool IsEncryptedTransfer => Protection?.IsEncrypted == true;
+
+    [JsonIgnore]
+    public bool UsesCompression => Protection?.UsesCompression == true;
 }

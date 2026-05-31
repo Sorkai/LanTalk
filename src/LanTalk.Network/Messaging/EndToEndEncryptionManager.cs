@@ -153,6 +153,19 @@ public sealed class EndToEndEncryptionManager : IDisposable
         }
     }
 
+    public byte[] ExportKey(string peerUserId)
+    {
+        lock (gate)
+        {
+            if (!activeSessions.TryGetValue(peerUserId, out var session))
+            {
+                throw new InvalidOperationException("当前会话没有可用的端到端加密密钥。");
+            }
+
+            return session.Key.ToArray();
+        }
+    }
+
     public void Dispose()
     {
         lock (gate)

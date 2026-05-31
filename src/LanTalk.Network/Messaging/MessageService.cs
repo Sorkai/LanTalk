@@ -69,6 +69,11 @@ public sealed class MessageService : IAsyncDisposable
         return _encryption.GetState(peerUserId);
     }
 
+    public byte[] ExportAttachmentKey(string peerUserId)
+    {
+        return _encryption.ExportKey(peerUserId);
+    }
+
     public async Task EnableEncryptionAsync(AppSettings localSettings, UserInfo receiver, CancellationToken cancellationToken = default)
     {
         _localUserId = localSettings.UserId;

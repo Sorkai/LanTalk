@@ -14,7 +14,7 @@ public partial class MainWindow : Window
     private MainWindowViewModel? _attachedViewModel;
     private TrayIcon? _trayIcon;
     private NativeMenuItem? _unreadMenuItem;
-    private DesktopNotificationService? _notificationService;
+    private IDesktopNotificationService? _notificationService;
     private bool _exitRequested;
     private bool _trayHintShown;
 
@@ -56,7 +56,12 @@ public partial class MainWindow : Window
         DetachViewModel();
         _attachedViewModel = viewModel;
         _notificationService?.Dispose();
-        _notificationService = viewModel is null ? null : new DesktopNotificationService(RestoreFromTray, viewModel.Logger);
+        _notificationService = viewModel is null
+            ? null
+            : new DesktopNotificationService(
+                RestoreFromTray,
+                () => viewModel.Settings.PreferSystemNotifications,
+                viewModel.Logger);
 
         _messagesCollection = viewModel?.Messages;
         if (_messagesCollection is null)

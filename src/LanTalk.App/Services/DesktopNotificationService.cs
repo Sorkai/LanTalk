@@ -4,15 +4,17 @@ using LanTalk.Core.Services;
 
 namespace LanTalk.App.Services;
 
-public sealed class DesktopNotificationService : IDisposable
+public sealed class DesktopNotificationService : IDesktopNotificationService
 {
     private readonly Action _activateMainWindow;
+    private readonly Func<bool> _preferSystemNotifications;
     private readonly ILanTalkLogger _logger;
     private ToastNotificationWindow? _currentWindow;
 
-    public DesktopNotificationService(Action activateMainWindow, ILanTalkLogger logger)
+    public DesktopNotificationService(Action activateMainWindow, Func<bool> preferSystemNotifications, ILanTalkLogger logger)
     {
         _activateMainWindow = activateMainWindow;
+        _preferSystemNotifications = preferSystemNotifications;
         _logger = logger;
     }
 
@@ -22,6 +24,11 @@ public sealed class DesktopNotificationService : IDisposable
         {
             try
             {
+                if (_preferSystemNotifications() && TryShowSystemNotification(title, message))
+                {
+                    return;
+                }
+
                 _currentWindow?.Close();
                 var window = new ToastNotificationWindow(title, message, _activateMainWindow);
                 _currentWindow = window;
@@ -45,5 +52,15 @@ public sealed class DesktopNotificationService : IDisposable
     {
         _currentWindow?.Close();
         _currentWindow = null;
+    }
+
+    private static bool TryShowSystemNotification(string title, string message)
+    {
+        if (!OperatingSystem.IsWindows())
+        {
+            return false;
+        }
+
+        return false;
     }
 }

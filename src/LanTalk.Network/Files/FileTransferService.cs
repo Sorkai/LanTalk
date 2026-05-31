@@ -23,9 +23,10 @@ public sealed class FileTransferService
         string sourcePath,
         IProgress<double>? progress = null,
         long resumeOffset = 0,
+        FileTransferSendOptions? options = null,
         CancellationToken cancellationToken = default)
     {
-        return _client.SendFileAsync(ipAddress, port, fileId, sourcePath, progress, resumeOffset, cancellationToken);
+        return _client.SendFileAsync(ipAddress, port, fileId, sourcePath, progress, resumeOffset, options, cancellationToken);
     }
 
     public async Task CopyFileAsync(

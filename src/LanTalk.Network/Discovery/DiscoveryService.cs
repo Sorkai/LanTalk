@@ -122,6 +122,7 @@ public sealed class DiscoveryService : IAsyncDisposable
             IpAddress = endpoint.Address.ToString(),
             MessagePort = payload.MessagePort,
             FilePort = payload.FilePort,
+            SupportsProtectedAttachments = payload.SupportsProtectedAttachments,
             Status = UserStatus.Online,
             LastSeenTime = DateTimeOffset.Now
         });
@@ -144,7 +145,8 @@ public sealed class DiscoveryService : IAsyncDisposable
             _settings.Nickname,
             _settings.MessagePort,
             _settings.FilePort,
-            NormalizeDepartment(_settings.Department));
+            NormalizeDepartment(_settings.Department),
+            SupportsProtectedAttachments: true);
 
         var packet = new NetworkPacket
         {

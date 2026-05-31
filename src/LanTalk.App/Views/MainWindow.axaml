@@ -255,6 +255,8 @@
                             <Button Content="上一个" Command="{Binding SelectPreviousRecentSessionCommand}" ToolTip.Tip="切换到上一会话"/>
                             <Button Content="下一个" Command="{Binding SelectNextRecentSessionCommand}" ToolTip.Tip="切换到下一会话"/>
                             <Button Content="未读" Command="{Binding SelectNextUnreadSessionCommand}" ToolTip.Tip="切换到未读会话"/>
+                            <Button Content="导出聊天" Command="{Binding ExportCurrentSessionCommand}" ToolTip.Tip="导出当前会话聊天记录"/>
+                            <Button Content="导出传输" Command="{Binding ExportFileTransfersCommand}" ToolTip.Tip="导出文件传输记录"/>
                             <Button Content="刷新" Command="{Binding RefreshDiscoveryCommand}" ToolTip.Tip="重新广播上线消息并刷新在线状态"/>
                             <Button Content="设置" Command="{Binding OpenSettingsCommand}"/>
                         </StackPanel>
@@ -499,6 +501,12 @@
                                 </StackPanel>
 
                                 <CheckBox Content="保存聊天记录" IsChecked="{Binding Settings.SaveChatHistory}"/>
+                                <CheckBox Content="优先尝试系统通知（不可用时回退到应用内提醒）"
+                                          IsChecked="{Binding Settings.PreferSystemNotifications}"/>
+                                <CheckBox Content="发送附件前尝试 GZip 压缩（端到端加密时自动跳过）"
+                                          IsChecked="{Binding Settings.EnableFileCompression}"/>
+                                <CheckBox Content="Windows 开机自启"
+                                          IsChecked="{Binding Settings.LaunchOnStartup}"/>
 
                                 <Grid ColumnDefinitions="*,*" ColumnSpacing="12">
                                 <StackPanel Spacing="6">

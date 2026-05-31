@@ -27,6 +27,15 @@ public sealed class ChatHistoryService
         return _messageRepository.SearchMessagesAsync(sessionId, query, cancellationToken: cancellationToken);
     }
 
+    public Task<IReadOnlyList<ChatMessage>> LoadMessagesForExportAsync(
+        string sessionId,
+        DateTimeOffset? startTime = null,
+        DateTimeOffset? endTime = null,
+        CancellationToken cancellationToken = default)
+    {
+        return _messageRepository.LoadMessagesForExportAsync(sessionId, startTime, endTime, cancellationToken);
+    }
+
     public Task<IReadOnlyList<ChatMessage>> MarkSessionIncomingMessagesReadAsync(
         string sessionId,
         DateTimeOffset readTime,
