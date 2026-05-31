@@ -184,7 +184,7 @@
                 </Grid>
             </Border>
 
-            <Grid Grid.Column="1" RowDefinitions="72,*,78">
+            <Grid Grid.Column="1" RowDefinitions="72,Auto,*,78">
                 <Border Grid.Row="0"
                         Background="{StaticResource LanTalkSurfaceBrush}"
                         BorderBrush="{StaticResource LanTalkBorderBrush}"
@@ -202,8 +202,23 @@
                     </Grid>
                 </Border>
 
+                <Border Grid.Row="1"
+                        Background="{StaticResource LanTalkSurfaceBrush}"
+                        BorderBrush="{StaticResource LanTalkBorderBrush}"
+                        BorderThickness="0,0,0,1"
+                        Padding="20,10">
+                    <Grid ColumnDefinitions="*,Auto" ColumnSpacing="12">
+                        <TextBox PlaceholderText="搜索当前聊天记录"
+                                 Text="{Binding MessageSearchText}"/>
+                        <TextBlock Grid.Column="1"
+                                   Text="{Binding MessageSearchStatus}"
+                                   Classes="caption"
+                                   VerticalAlignment="Center"/>
+                    </Grid>
+                </Border>
+
                 <ScrollViewer x:Name="MessagesScrollViewer"
-                              Grid.Row="1"
+                              Grid.Row="2"
                               Padding="20"
                               ClipToBounds="True"
                               HorizontalScrollBarVisibility="Disabled"
@@ -255,7 +270,7 @@
                     </ItemsControl>
                 </ScrollViewer>
 
-                <Border Grid.Row="2"
+                <Border Grid.Row="3"
                         Background="{StaticResource LanTalkSurfaceBrush}"
                         BorderBrush="{StaticResource LanTalkBorderBrush}"
                         BorderThickness="0,1,0,0"

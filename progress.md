@@ -366,3 +366,52 @@
   - `dotnet publish src/LanTalk.App/LanTalk.App.csproj -c Release -r win-x64 -p:PublishAot=true -v:minimal`：发布成功；仍仅保留既有 Avalonia DataGrid trim/AOT 分析警告。
 - 后续待验证：
   - 双机/三机环境下验证多个网段是否按预期发送发现包。
+
+## 会话：2026-05-31
+
+### 阶段 11-13：多机与文件传输验收回填
+- **状态：** 已完成。
+- 用户反馈：
+  - 多机验证已经完成，没有发现问题。
+  - 文件传输测试已经完成，没有发现问题。
+- 已执行操作：
+  - 更新 `task_plan.md`，将阶段 11 多机真实验收标记为完成。
+  - 更新 `task_plan.md`，将阶段 12 的端口占用和自定义网段实机验证标记为完成。
+  - 更新 `task_plan.md`，将阶段 13 网络与文件传输稳定性打磨标记为完成。
+- 下一步：
+  - 进入阶段 14 的验收文档和发布资料整理。
+  - 进入阶段 15 的 P1 功能开发，优先实现聊天记录搜索。
+
+### 阶段 15：聊天记录搜索
+- **状态：** 已完成。
+- 本轮目标：
+  - 在稳定的 MVP 基础上推进第一个后续 P1 功能。
+  - 实现当前会话内聊天记录搜索，不改变网络协议和模块边界。
+- 已执行操作：
+  - `MessageRepository` 新增 `SearchMessagesAsync`，按当前 `SessionId` 搜索 SQLite 中的历史消息。
+  - `ChatHistoryService` 暴露搜索方法给 App 层使用。
+  - 右侧聊天区域新增“搜索当前聊天记录”输入框和结果状态文案。
+  - `MainWindowViewModel` 新增搜索状态、250ms 输入延迟、搜索结果加载和清空恢复最近消息逻辑。
+  - 搜索激活时，新收发消息会重新执行当前会话搜索，避免不匹配消息混入搜索结果。
+  - 新增 `MessageRepositoryTests`，覆盖会话隔离搜索和 `%` 字符字面量搜索。
+  - 更新 README、`docs/test-plan.md`、`task_plan.md`、`findings.md`。
+- 验证结果：
+  - 初次将 `dotnet build` 与 `dotnet test` 并行执行时，build 被 `VBCSCompiler` 临时锁定 `LanTalk.Core.dll` 输出文件；随后改为顺序执行。
+  - `dotnet build LanTalk.sln -v:minimal`：0 警告，0 错误。
+  - `dotnet test LanTalk.sln -v:minimal`：26 个测试全部通过。
+
+### 内网通功能差距检查
+- **状态：** 已完成评估。
+- 本轮目标：
+  - 检查当前 LanTalk 与“内网通”类局域网办公 IM 的功能差距。
+  - 按必要性整理后续优化空间。
+- 已执行操作：
+  - 读取 `AGENTS.md`、`README.md`、`task_plan.md`、`findings.md`、`progress.md`。
+  - 抽查 `MainWindowViewModel`、`MessageService`、`TcpFileServer` 等关键实现。
+  - 检索公开资料中内网通的常见功能描述，用于功能广度对标。
+  - 执行 `dotnet test LanTalk.sln -v:minimal`。
+- 验证结果：
+  - `dotnet test LanTalk.sln -v:minimal`：24 个测试全部通过。
+- 结论：
+  - 当前 LanTalk 已具备项目 MVP 的主体能力，距离“课堂/演示级内网通替代”主要差在真实多机验收和异常闭环。
+  - 距离完整成熟内网通类产品仍有明显差距，重点缺口是群组/多标签、文件夹与断点续传、搜索导出、通知托盘、丰富消息形态、互通和加密。

@@ -42,6 +42,7 @@ public sealed partial class MainWindowViewModel : ViewModelBase
     private readonly Dictionary<string, ChatMessageViewModel> _incomingFileMessages = new(StringComparer.Ordinal);
     private readonly Dictionary<string, string> _incomingSavePaths = new(StringComparer.Ordinal);
     private readonly HashSet<string> _incomingFinishedNotifications = new(StringComparer.Ordinal);
+    private CancellationTokenSource? _messageSearchCts;
     private CancellationTokenSource? _fileServerCts;
     private Task? _fileServerTask;
     private AppSettings _settings = new();
@@ -58,6 +59,12 @@ public sealed partial class MainWindowViewModel : ViewModelBase
 
     [ObservableProperty]
     private string searchText = string.Empty;
+
+    [ObservableProperty]
+    private string messageSearchText = string.Empty;
+
+    [ObservableProperty]
+    private string messageSearchStatus = string.Empty;
 
     [ObservableProperty]
     private OnlineUserViewModel? selectedUser;
@@ -127,6 +134,11 @@ public sealed partial class MainWindowViewModel : ViewModelBase
         RefreshFilteredUsers();
     }
 
+    partial void OnMessageSearchTextChanged(string value)
+    {
+        _ = ApplyMessageSearchAsync(value);
+    }
+
     partial void OnSelectedUserChanged(OnlineUserViewModel? value)
     {
         if (value is null)
@@ -178,12 +190,20 @@ public sealed partial class MainWindowViewModel : ViewModelBase
         };
 
         DraftMessage = string.Empty;
-        Messages.Add(ToMessageViewModel(message, LocalNickname));
         UpsertRecentSession(SelectedUser, content, moveToTop: true);
 
         if (_settings.SaveChatHistory)
         {
             await _chatHistoryService.SaveMessageAsync(message);
+        }
+
+        if (IsMessageSearchActive())
+        {
+            await SearchSessionMessagesAsync(SelectedUser, MessageSearchText);
+        }
+        else
+        {
+            Messages.Add(ToMessageViewModel(message, LocalNickname));
         }
 
         try
@@ -536,6 +556,13 @@ public sealed partial class MainWindowViewModel : ViewModelBase
             _fileServerCts = null;
         }
 
+        if (_messageSearchCts is not null)
+        {
+            await _messageSearchCts.CancelAsync().ConfigureAwait(false);
+            _messageSearchCts.Dispose();
+            _messageSearchCts = null;
+        }
+
         await _messageService.StopAsync().ConfigureAwait(false);
         await _discoveryService.StopAsync().ConfigureAwait(false);
         await Dispatcher.UIThread.InvokeAsync(() => LocalStatusText = "离线");
@@ -647,9 +674,19 @@ public sealed partial class MainWindowViewModel : ViewModelBase
             await _chatHistoryService.SaveMessageAsync(message);
         }
 
-        if (SelectedUser?.UserId == sessionId || (kind == MessageKind.Broadcast && SelectedUser?.UserId == NetworkConstants.BroadcastSessionId))
+        var isCurrentSession = SelectedUser?.UserId == sessionId ||
+            (kind == MessageKind.Broadcast && SelectedUser?.UserId == NetworkConstants.BroadcastSessionId);
+
+        if (isCurrentSession && SelectedUser is not null)
         {
-            Messages.Add(ToMessageViewModel(message, senderName));
+            if (IsMessageSearchActive())
+            {
+                await SearchSessionMessagesAsync(SelectedUser, MessageSearchText);
+            }
+            else
+            {
+                Messages.Add(ToMessageViewModel(message, senderName));
+            }
         }
         else
         {
@@ -1001,6 +1038,11 @@ public sealed partial class MainWindowViewModel : ViewModelBase
         return value.Contains(query, StringComparison.OrdinalIgnoreCase);
     }
 
+    private bool IsMessageSearchActive()
+    {
+        return !string.IsNullOrWhiteSpace(MessageSearchText);
+    }
+
     private static void ReplaceCollection(
         ObservableCollection<OnlineUserViewModel> target,
         IEnumerable<OnlineUserViewModel> source)
@@ -1026,11 +1068,23 @@ public sealed partial class MainWindowViewModel : ViewModelBase
 
     private async Task LoadSessionMessagesAsync(OnlineUserViewModel user)
     {
+        if (!string.IsNullOrWhiteSpace(MessageSearchText))
+        {
+            await SearchSessionMessagesAsync(user, MessageSearchText);
+            return;
+        }
+
+        await LoadRecentSessionMessagesAsync(user);
+    }
+
+    private async Task LoadRecentSessionMessagesAsync(OnlineUserViewModel user, CancellationToken cancellationToken = default)
+    {
         Messages.Clear();
+        MessageSearchStatus = string.Empty;
 
         if (user.UserId == NetworkConstants.BroadcastSessionId)
         {
-            var broadcastHistory = await _chatHistoryService.LoadRecentMessagesAsync(NetworkConstants.BroadcastSessionId);
+            var broadcastHistory = await _chatHistoryService.LoadRecentMessagesAsync(NetworkConstants.BroadcastSessionId, cancellationToken);
             foreach (var message in broadcastHistory)
             {
                 Messages.Add(ToMessageViewModel(message, message.IsMine ? LocalNickname : "局域网广播"));
@@ -1050,7 +1104,7 @@ public sealed partial class MainWindowViewModel : ViewModelBase
             return;
         }
 
-        var history = await _chatHistoryService.LoadRecentMessagesAsync(user.UserId);
+        var history = await _chatHistoryService.LoadRecentMessagesAsync(user.UserId, cancellationToken);
         foreach (var message in history)
         {
             Messages.Add(ToMessageViewModel(message, message.IsMine ? LocalNickname : user.Nickname));
@@ -1068,6 +1122,84 @@ public sealed partial class MainWindowViewModel : ViewModelBase
             TimeText = DateTimeOffset.Now.ToString("HH:mm"),
             Kind = MessageKind.Private
         });
+    }
+
+    private async Task ApplyMessageSearchAsync(string query)
+    {
+        if (SelectedUser is null)
+        {
+            MessageSearchStatus = string.Empty;
+            return;
+        }
+
+        _messageSearchCts?.Cancel();
+        _messageSearchCts?.Dispose();
+        _messageSearchCts = new CancellationTokenSource();
+        var cancellationToken = _messageSearchCts.Token;
+
+        try
+        {
+            await Task.Delay(250, cancellationToken);
+
+            if (string.IsNullOrWhiteSpace(query))
+            {
+                await LoadRecentSessionMessagesAsync(SelectedUser, cancellationToken);
+                return;
+            }
+
+            await SearchSessionMessagesAsync(SelectedUser, query, cancellationToken);
+        }
+        catch (OperationCanceledException)
+        {
+        }
+        catch (Exception ex)
+        {
+            _logger.Error("聊天记录搜索失败。", ex);
+            MessageSearchStatus = "搜索失败";
+            StatusMessage = $"聊天记录搜索失败：{ex.Message}";
+        }
+    }
+
+    private async Task SearchSessionMessagesAsync(OnlineUserViewModel user, string query, CancellationToken cancellationToken = default)
+    {
+        var trimmedQuery = query.Trim();
+        if (string.IsNullOrWhiteSpace(trimmedQuery))
+        {
+            await LoadRecentSessionMessagesAsync(user, cancellationToken);
+            return;
+        }
+
+        var sessionId = user.UserId == NetworkConstants.BroadcastSessionId
+            ? NetworkConstants.BroadcastSessionId
+            : user.UserId;
+
+        var results = await _chatHistoryService.SearchMessagesAsync(sessionId, trimmedQuery, cancellationToken);
+        Messages.Clear();
+
+        foreach (var message in results)
+        {
+            var senderName = message.IsMine
+                ? LocalNickname
+                : user.UserId == NetworkConstants.BroadcastSessionId
+                    ? "局域网广播"
+                    : user.Nickname;
+            Messages.Add(ToMessageViewModel(message, senderName));
+        }
+
+        MessageSearchStatus = results.Count == 0
+            ? $"没有找到包含“{trimmedQuery}”的消息"
+            : $"找到 {results.Count} 条包含“{trimmedQuery}”的消息";
+
+        if (results.Count == 0)
+        {
+            Messages.Add(new ChatMessageViewModel
+            {
+                SenderName = "搜索",
+                Content = "当前会话没有匹配的聊天记录。",
+                TimeText = DateTimeOffset.Now.ToString("HH:mm"),
+                Kind = MessageKind.System
+            });
+        }
     }
 
     private void StartFileServer()

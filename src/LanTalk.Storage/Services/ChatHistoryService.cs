@@ -21,5 +21,9 @@ public sealed class ChatHistoryService
     {
         return _messageRepository.LoadRecentMessagesAsync(sessionId, cancellationToken: cancellationToken);
     }
-}
 
+    public Task<IReadOnlyList<ChatMessage>> SearchMessagesAsync(string sessionId, string query, CancellationToken cancellationToken = default)
+    {
+        return _messageRepository.SearchMessagesAsync(sessionId, query, cancellationToken: cancellationToken);
+    }
+}

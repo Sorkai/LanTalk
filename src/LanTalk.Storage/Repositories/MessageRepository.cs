@@ -69,6 +69,47 @@ public sealed class MessageRepository
         return messages;
     }
 
+    public async Task<IReadOnlyList<ChatMessage>> SearchMessagesAsync(
+        string sessionId,
+        string query,
+        int limit = NetworkConstants.RecentMessageLimit,
+        CancellationToken cancellationToken = default)
+    {
+        var trimmedQuery = query.Trim();
+        if (string.IsNullOrWhiteSpace(trimmedQuery))
+        {
+            return await LoadRecentMessagesAsync(sessionId, limit, cancellationToken).ConfigureAwait(false);
+        }
+
+        await using var connection = _connectionFactory.CreateConnection();
+        await connection.OpenAsync(cancellationToken).ConfigureAwait(false);
+
+        await using var command = connection.CreateCommand();
+        command.CommandText =
+            """
+            SELECT MessageId, SessionId, SenderId, ReceiverId, MessageType, Content, SendTime, IsMine
+            FROM ChatMessages
+            WHERE SessionId = $sessionId
+              AND Content LIKE $query ESCAPE '\'
+            ORDER BY SendTime DESC
+            LIMIT $limit;
+            """;
+        command.Parameters.AddWithValue("$sessionId", sessionId);
+        command.Parameters.AddWithValue("$query", $"%{EscapeLikePattern(trimmedQuery)}%");
+        command.Parameters.AddWithValue("$limit", limit);
+
+        var messages = new List<ChatMessage>();
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
+
+        while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false))
+        {
+            messages.Add(ReadMessage(reader));
+        }
+
+        messages.Reverse();
+        return messages;
+    }
+
     private static ChatMessage ReadMessage(SqliteDataReader reader)
     {
         return new ChatMessage
@@ -83,5 +124,12 @@ public sealed class MessageRepository
             IsMine = reader.GetInt32(7) == 1
         };
     }
-}
 
+    private static string EscapeLikePattern(string value)
+    {
+        return value
+            .Replace("\\", "\\\\", StringComparison.Ordinal)
+            .Replace("%", "\\%", StringComparison.Ordinal)
+            .Replace("_", "\\_", StringComparison.Ordinal);
+    }
+}
