@@ -203,4 +203,52 @@ public sealed class MessageServiceTests
         Assert.True(senderState.IsEnabled);
         Assert.True(receiverState.IsEnabled);
     }
+
+    [Fact]
+    public async Task MessageService_ShouldSendGroupMessageOverTcp()
+    {
+        var logger = new ConsoleLanTalkLogger();
+        var receiver = new MessageService(new TcpMessageClient(), new TcpMessageServer(logger), logger);
+        var received = new TaskCompletionSource<NetworkPacket>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var port = Random.Shared.Next(56000, 59000);
+
+        receiver.PacketReceived += (_, packet) => received.TrySetResult(packet);
+        await receiver.StartAsync(port);
+
+        var sender = new MessageService(new TcpMessageClient(), new TcpMessageServer(logger), logger);
+        var local = new AppSettings { UserId = "user-a", MessagePort = port + 100, FilePort = port + 101, UdpPort = port + 102 };
+        var peer = new UserInfo
+        {
+            UserId = "user-b",
+            Nickname = "接收方",
+            IpAddress = "127.0.0.1",
+            MessagePort = port,
+            FilePort = port + 1,
+            Status = UserStatus.Online,
+            LastSeenTime = DateTimeOffset.Now
+        };
+        var payload = new GroupMessagePayload(
+            "message-a",
+            "group-a",
+            "项目组",
+            GroupKind.Temporary,
+            ["user-a", "user-b"],
+            "发送方",
+            "群组消息");
+
+        var result = await sender.SendGroupMessageAsync(local, [peer], payload);
+        var completed = await Task.WhenAny(received.Task, Task.Delay(TimeSpan.FromSeconds(3)));
+
+        await receiver.StopAsync();
+        await receiver.DisposeAsync();
+        await sender.DisposeAsync();
+
+        Assert.Equal(1, result.SuccessCount);
+        Assert.Equal(0, result.FailureCount);
+        Assert.Same(received.Task, completed);
+
+        var packet = await received.Task;
+        Assert.Equal(PacketType.GroupMessage, packet.Type);
+        Assert.Equal("user-a", packet.FromUserId);
+    }
 }

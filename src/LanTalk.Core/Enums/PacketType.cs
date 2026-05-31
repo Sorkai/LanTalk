@@ -8,6 +8,7 @@ public enum PacketType
     Bye,
     PrivateMessage,
     BroadcastMessage,
+    GroupMessage,
     FileRequest,
     FileAccept,
     FileReject,

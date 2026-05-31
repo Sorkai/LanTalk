@@ -208,6 +208,41 @@ public sealed class MessageService : IAsyncDisposable
         return new BroadcastSendResult(success, failure);
     }
 
+    public async Task<BroadcastSendResult> SendGroupMessageAsync(
+        AppSettings localSettings,
+        IEnumerable<UserInfo> receivers,
+        GroupMessagePayload payload,
+        CancellationToken cancellationToken = default)
+    {
+        var success = 0;
+        var failure = 0;
+        var payloadJson = JsonSerializer.Serialize(payload, LanTalkJsonContext.Default.GroupMessagePayload);
+
+        foreach (var receiver in receivers.Where(user => user.UserId != localSettings.UserId && user.Status == UserStatus.Online))
+        {
+            var packet = new NetworkPacket
+            {
+                Type = PacketType.GroupMessage,
+                FromUserId = localSettings.UserId,
+                ToUserId = receiver.UserId,
+                PayloadJson = payloadJson
+            };
+
+            try
+            {
+                await _client.SendAsync(receiver.IpAddress, receiver.MessagePort, packet, cancellationToken).ConfigureAwait(false);
+                success++;
+            }
+            catch (Exception ex)
+            {
+                failure++;
+                _logger.Warning($"群组消息发送给 {receiver.Nickname}({receiver.IpAddress}) 失败：{ex.Message}");
+            }
+        }
+
+        return new BroadcastSendResult(success, failure);
+    }
+
     private NetworkPacket CreatePrivateMessagePacket(string fromUserId, string toUserId, TextMessagePayload payload)
     {
         var packetId = Guid.NewGuid().ToString("N");

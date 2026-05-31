@@ -83,6 +83,37 @@ public sealed class MessageRepositoryTests
         File.Delete(databasePath);
     }
 
+    [Fact]
+    public async Task SaveAsync_ShouldPersistGroupMessages()
+    {
+        var databasePath = Path.Combine(Path.GetTempPath(), $"lantalk-{Guid.NewGuid():N}.db");
+        var factory = new SqliteConnectionFactory(databasePath);
+        var initializer = new DatabaseInitializer(factory);
+        var repository = new MessageRepository(factory);
+
+        await initializer.InitializeAsync();
+        await repository.SaveAsync(new ChatMessage
+        {
+            MessageId = "group-message-a",
+            SessionId = "group-a",
+            SenderId = "user-a",
+            ReceiverId = "group-a",
+            Kind = MessageKind.Group,
+            Content = "多人会话消息",
+            SendTime = DateTimeOffset.Now,
+            IsMine = false
+        });
+
+        var messages = await repository.LoadRecentMessagesAsync("group-a");
+
+        Assert.Single(messages);
+        Assert.Equal(MessageKind.Group, messages[0].Kind);
+        Assert.Equal("多人会话消息", messages[0].Content);
+
+        SqliteConnection.ClearAllPools();
+        File.Delete(databasePath);
+    }
+
     private static ChatMessage CreateMessage(string sessionId, string senderId, string content, DateTimeOffset sendTime)
     {
         return new ChatMessage

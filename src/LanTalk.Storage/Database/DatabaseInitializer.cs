@@ -84,12 +84,26 @@ public sealed class DatabaseInitializer
         );
         """,
         """
+        CREATE TABLE IF NOT EXISTS ChatGroups (
+            GroupId TEXT PRIMARY KEY,
+            Name TEXT NOT NULL,
+            Kind TEXT NOT NULL,
+            MemberUserIdsJson TEXT NOT NULL,
+            CreatedTime TEXT NOT NULL,
+            UpdatedTime TEXT NOT NULL
+        );
+        """,
+        """
         CREATE INDEX IF NOT EXISTS IX_ChatMessages_SessionId_SendTime
         ON ChatMessages(SessionId, SendTime);
         """,
         """
         CREATE INDEX IF NOT EXISTS IX_FileTransfers_TransferTime
         ON FileTransfers(TransferTime);
+        """,
+        """
+        CREATE INDEX IF NOT EXISTS IX_ChatGroups_UpdatedTime
+        ON ChatGroups(UpdatedTime);
         """
     ];
 }

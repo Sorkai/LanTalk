@@ -95,15 +95,23 @@
                              PlaceholderText="搜索用户或会话"
                              Text="{Binding SearchText}"/>
 
-                    <Button Grid.Row="2"
-                            Classes="primary"
-                            HorizontalAlignment="Stretch"
-                            Command="{Binding SelectBroadcastCommand}">
-                        <Grid ColumnDefinitions="Auto,*">
-                            <TextBlock Text="📣" FontSize="16" Foreground="White" VerticalAlignment="Center"/>
-                            <TextBlock Grid.Column="1" Text="全员广播" Foreground="White" Margin="8,0,0,0" VerticalAlignment="Center"/>
-                        </Grid>
-                    </Button>
+                    <StackPanel Grid.Row="2" Spacing="8">
+                        <Button Classes="primary"
+                                HorizontalAlignment="Stretch"
+                                Command="{Binding SelectBroadcastCommand}">
+                            <Grid ColumnDefinitions="Auto,*">
+                                <TextBlock Text="📣" FontSize="16" Foreground="White" VerticalAlignment="Center"/>
+                                <TextBlock Grid.Column="1" Text="全员广播" Foreground="White" Margin="8,0,0,0" VerticalAlignment="Center"/>
+                            </Grid>
+                        </Button>
+                        <Button HorizontalAlignment="Stretch"
+                                Command="{Binding OpenGroupPaneCommand}">
+                            <Grid ColumnDefinitions="Auto,*">
+                                <TextBlock Text="👥" FontSize="16" VerticalAlignment="Center"/>
+                                <TextBlock Grid.Column="1" Text="新建群组" Margin="8,0,0,0" VerticalAlignment="Center"/>
+                            </Grid>
+                        </Button>
+                    </StackPanel>
 
                     <ScrollViewer Grid.Row="3">
                         <StackPanel Spacing="16">
@@ -228,6 +236,9 @@
                                       IsEnabled="{Binding CanToggleConversationEncryption}"
                                       ToolTip.Tip="{Binding ConversationEncryptionFingerprint}"
                                       VerticalAlignment="Center"/>
+                            <Button Content="移除群组"
+                                    Command="{Binding DeleteSelectedGroupCommand}"
+                                    IsVisible="{Binding CanDeleteSelectedGroup}"/>
                             <Button Content="上一个" Command="{Binding SelectPreviousRecentSessionCommand}" ToolTip.Tip="切换到上一会话"/>
                             <Button Content="下一个" Command="{Binding SelectNextRecentSessionCommand}" ToolTip.Tip="切换到下一会话"/>
                             <Button Content="未读" Command="{Binding SelectNextUnreadSessionCommand}" ToolTip.Tip="切换到未读会话"/>
@@ -529,6 +540,64 @@
                         <StackPanel Grid.Row="2" Orientation="Horizontal" Spacing="10" HorizontalAlignment="Right">
                             <Button Content="取消" Command="{Binding CloseSettingsCommand}"/>
                             <Button Classes="primary" Content="保存设置" Command="{Binding SaveSettingsCommand}"/>
+                        </StackPanel>
+                    </Grid>
+                </Border>
+            </Border>
+
+            <Border Grid.ColumnSpan="2"
+                    IsVisible="{Binding IsGroupPaneOpen}"
+                    Background="#66000000">
+                <Border Width="480"
+                        MaxHeight="620"
+                        HorizontalAlignment="Center"
+                        VerticalAlignment="Center"
+                        Background="{StaticResource LanTalkSurfaceBrush}"
+                        CornerRadius="8"
+                        Padding="22"
+                        BoxShadow="0 8 22 0 #33000000">
+                    <Grid RowDefinitions="Auto,Auto,*,Auto" RowSpacing="14">
+                        <StackPanel Spacing="4">
+                            <TextBlock Text="新建群组" Classes="title"/>
+                            <TextBlock Text="选择成员后会创建一个多人会话，消息将点对点发送给在线成员。"
+                                       Classes="caption"
+                                       TextWrapping="Wrap"/>
+                        </StackPanel>
+
+                        <StackPanel Grid.Row="1" Spacing="10">
+                            <TextBox PlaceholderText="群组名称"
+                                     Text="{Binding GroupDraftName}"/>
+                            <CheckBox Content="保存为永久群组"
+                                      IsChecked="{Binding IsPermanentGroupDraft}"/>
+                            <TextBlock Text="{Binding GroupDraftStatus}"
+                                       Classes="caption"
+                                       Foreground="#DC2626"/>
+                        </StackPanel>
+
+                        <ScrollViewer Grid.Row="2" VerticalScrollBarVisibility="Auto">
+                            <ItemsControl ItemsSource="{Binding GroupMemberCandidates}">
+                                <ItemsControl.ItemTemplate>
+                                    <DataTemplate x:DataType="vm:GroupMemberCandidateViewModel">
+                                        <Border BorderBrush="{StaticResource LanTalkBorderBrush}"
+                                                BorderThickness="0,0,0,1"
+                                                Padding="2,8">
+                                            <CheckBox IsChecked="{Binding IsSelected}">
+                                                <Grid ColumnDefinitions="*,Auto" Width="410">
+                                                    <StackPanel>
+                                                        <TextBlock Text="{Binding Nickname}" FontWeight="SemiBold" TextTrimming="CharacterEllipsis"/>
+                                                        <TextBlock Text="{Binding Summary}" Classes="caption" TextTrimming="CharacterEllipsis"/>
+                                                    </StackPanel>
+                                                </Grid>
+                                            </CheckBox>
+                                        </Border>
+                                    </DataTemplate>
+                                </ItemsControl.ItemTemplate>
+                            </ItemsControl>
+                        </ScrollViewer>
+
+                        <StackPanel Grid.Row="3" Orientation="Horizontal" HorizontalAlignment="Right" Spacing="10">
+                            <Button Content="取消" Command="{Binding CloseGroupPaneCommand}"/>
+                            <Button Classes="primary" Content="创建群组" Command="{Binding CreateGroupCommand}"/>
                         </StackPanel>
                     </Grid>
                 </Border>

@@ -21,6 +21,7 @@
 ## TCP 包类型
 - `PrivateMessage`：一对一私聊消息。
 - `BroadcastMessage`：全员广播消息。
+- `GroupMessage`：群组/多人会话消息。
 - `FileRequest`：文件发送请求。
 - `FileAccept`：同意接收文件。
 - `FileReject`：拒绝接收文件。
@@ -36,12 +37,20 @@
 `NetworkPacket.IsEncrypted` 用于标记 `PrivateMessage` 的 `PayloadJson` 是否为加密载荷。旧客户端或未启用加密的会话会保持默认 `false`，按明文 `TextMessagePayload` 处理。
 
 ## 端到端加密
-- 加密范围：当前实现覆盖一对一私聊文本消息；广播、文件元数据和文件流仍使用原协议。
+- 加密范围：当前实现覆盖一对一私聊文本消息；广播、群组消息、文件元数据和文件流仍使用原协议。
 - 协商流程：用户在私聊会话中启用开关后，发送方发出 `EncryptionHello`，接收方使用临时 ECDH P-256 密钥派生会话密钥并返回 `EncryptionAck`。
 - 消息加密：协商完成后，`PrivateMessage` 的 `PayloadJson` 改为 `EncryptedMessagePayload`，消息正文使用 AES-256-GCM 加密。
 - 关闭流程：任一方关闭开关时发送 `EncryptionCancel`，双方清除内存中的会话密钥。
 - 密钥存储：会话密钥只保存在运行内存中，不写入 SQLite 或设置文件；应用重启后需要重新协商。
 - 指纹校验：界面会显示加密指纹，演示或真实使用时可由两端人工比对，降低中间人攻击风险。
+
+## 群组与多人会话
+- 群组不依赖中心服务器，创建方维护成员列表，发送 `GroupMessage` 时按成员逐个 TCP 点对点发送。
+- 群组消息载荷使用 `GroupMessagePayload`，包含 `GroupId`、群名称、群类型、成员 UserId 列表、发送者昵称和文本内容。
+- 临时群组只保留在当前运行时会话列表。
+- 永久群组保存到本地 SQLite `ChatGroups` 表，重启后恢复；接收方收到永久群组消息后也会保存该群组。
+- 群组聊天记录继续写入 `ChatMessages`，其中 `SessionId` 和 `ReceiverId` 使用 `GroupId`。
+- 当前群组仅支持文本消息；群组图片/文件、群组加密和离线补发后续扩展。
 
 ## 文件传输
 - 文件请求通过 TCP 消息端口发送 `FileTransferRequest`。

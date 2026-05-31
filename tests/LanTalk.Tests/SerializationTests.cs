@@ -105,4 +105,26 @@ public sealed class SerializationTests
         Assert.Equal(1024, restored.FileSize);
         Assert.Equal(@"C:\Temp\photo.png", restored.LocalPath);
     }
+
+    [Fact]
+    public void GroupMessagePayload_ShouldRoundTrip()
+    {
+        var payload = new GroupMessagePayload(
+            "message-a",
+            "group-a",
+            "项目组",
+            GroupKind.Permanent,
+            ["user-a", "user-b"],
+            "张同学",
+            "大家同步一下进度");
+
+        var json = JsonSerializer.Serialize(payload, LanTalkJsonContext.Default.GroupMessagePayload);
+        var restored = JsonSerializer.Deserialize(json, LanTalkJsonContext.Default.GroupMessagePayload);
+
+        Assert.NotNull(restored);
+        Assert.Equal("group-a", restored.GroupId);
+        Assert.Equal(GroupKind.Permanent, restored.GroupKind);
+        Assert.Contains("user-b", restored.MemberUserIds);
+        Assert.Equal("大家同步一下进度", restored.Content);
+    }
 }

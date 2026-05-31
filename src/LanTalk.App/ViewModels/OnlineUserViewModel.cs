@@ -42,6 +42,14 @@ public sealed partial class OnlineUserViewModel : ViewModelBase
     [ObservableProperty]
     private bool isSelected;
 
+    [ObservableProperty]
+    private bool isGroupSession;
+
+    [ObservableProperty]
+    private GroupKind groupKind = GroupKind.Temporary;
+
+    public List<string> GroupMemberIds { get; } = [];
+
     public string Initial => string.IsNullOrWhiteSpace(Nickname)
         ? "?"
         : Nickname[..1].ToUpperInvariant();
@@ -52,10 +60,16 @@ public sealed partial class OnlineUserViewModel : ViewModelBase
 
     public string StatusText => Status switch
     {
+        _ when IsGroupSession && GroupKind == GroupKind.Permanent => "永久群组",
+        _ when IsGroupSession => "临时群组",
         UserStatus.Online => "在线",
         UserStatus.Away => "暂离",
         _ => "离线"
     };
+
+    public string GroupKindText => GroupKind == GroupKind.Permanent ? "永久群组" : "临时群组";
+
+    public int GroupMemberCount => GroupMemberIds.Count;
 
     public string DepartmentText => string.IsNullOrWhiteSpace(Department)
         ? NetworkConstants.DefaultDepartment
@@ -81,6 +95,24 @@ public sealed partial class OnlineUserViewModel : ViewModelBase
     partial void OnStatusChanged(UserStatus value)
     {
         OnPropertyChanged(nameof(StatusText));
+    }
+
+    partial void OnIsGroupSessionChanged(bool value)
+    {
+        OnPropertyChanged(nameof(StatusText));
+    }
+
+    partial void OnGroupKindChanged(GroupKind value)
+    {
+        OnPropertyChanged(nameof(StatusText));
+        OnPropertyChanged(nameof(GroupKindText));
+    }
+
+    public void RefreshGroupMetadata()
+    {
+        OnPropertyChanged(nameof(GroupMemberCount));
+        OnPropertyChanged(nameof(StatusText));
+        OnPropertyChanged(nameof(GroupKindText));
     }
 
     public static OnlineUserViewModel FromUser(UserInfo user)

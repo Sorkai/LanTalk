@@ -491,3 +491,20 @@
   - 初次 `dotnet test` 失败：新增测试误用了不存在的 `MessageRepository.LoadRecentAsync`。
   - 修复为 `LoadRecentMessagesAsync` 并合并加密基线后，`dotnet test LanTalk.sln -v:minimal`：37 个测试全部通过。
   - Debug 启动冒烟：应用运行 12 秒无 stdout/stderr 异常输出，随后主动结束进程。
+
+### 阶段 18：临时群组、永久群组与多人会话
+- **状态：** 已完成。
+- 设计结论：
+  - 不引入服务端，群组消息复用 TCP 点对点发送，发送方遍历当前在线成员。
+  - 群组会话使用 `GroupId` 作为聊天记录 `SessionId`。
+  - 临时群组只保留在当前运行时会话列表；永久群组写入本地 SQLite 并在启动时恢复。
+  - 群组文本消息先不启用端到端加密，文件/图片群发也先明确提示后续支持，避免和现有一对一文件传输状态机混用。
+- 已执行操作：
+  - Core 新增 `GroupKind`、`ChatGroup`、`GroupMessagePayload`、`PacketType.GroupMessage` 和 `MessageKind.Group`。
+  - Storage 新增 `ChatGroups` 表和 `GroupRepository`，支持永久群组保存、加载和删除。
+  - Network 新增 `SendGroupMessageAsync`，按在线成员逐个发送群组消息并返回成功/失败统计。
+  - App 新增群组创建弹层、成员选择、临时/永久群组标识、群组会话加载、群消息收发、未读提醒和永久群组启动恢复。
+  - 群组会话禁用端到端加密开关，并对群组文件/图片发送给出后续支持提示。
+- 当前验证：
+  - `dotnet build LanTalk.sln -v:minimal`：0 警告，0 错误。
+  - `dotnet test LanTalk.sln -v:minimal`：43 个测试全部通过。

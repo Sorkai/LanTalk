@@ -36,6 +36,7 @@ public sealed partial class MainWindowViewModel : ViewModelBase
     private readonly FileTransferService _fileTransferService;
     private readonly FileTransferRepository _fileTransferRepository;
     private readonly UserRepository _userRepository;
+    private readonly GroupRepository _groupRepository;
     private readonly TcpFileServer _fileServer;
     private readonly ILanTalkLogger _logger;
     private readonly Dictionary<string, FileTransferRequest> _pendingFileRequests = new(StringComparer.Ordinal);
@@ -125,6 +126,21 @@ public sealed partial class MainWindowViewModel : ViewModelBase
     private FileReceiveRequestViewModel? pendingFileRequest;
 
     [ObservableProperty]
+    private bool isGroupPaneOpen;
+
+    [ObservableProperty]
+    private string groupDraftName = string.Empty;
+
+    [ObservableProperty]
+    private bool isPermanentGroupDraft = true;
+
+    [ObservableProperty]
+    private string groupDraftStatus = string.Empty;
+
+    [ObservableProperty]
+    private bool canDeleteSelectedGroup;
+
+    [ObservableProperty]
     private bool isEmojiPickerOpen;
 
     [ObservableProperty]
@@ -160,6 +176,8 @@ public sealed partial class MainWindowViewModel : ViewModelBase
 
     public ObservableCollection<ChatMessageViewModel> Messages { get; } = [];
 
+    public ObservableCollection<GroupMemberCandidateViewModel> GroupMemberCandidates { get; } = [];
+
     public IReadOnlyList<string> CommonEmojis { get; } =
     [
         "😀", "😂", "😊", "😍", "👍", "👏", "🙏", "💪",
@@ -187,6 +205,7 @@ public sealed partial class MainWindowViewModel : ViewModelBase
         _fileTransferService = services.FileTransferService;
         _fileTransferRepository = services.FileTransferRepository;
         _userRepository = services.UserRepository;
+        _groupRepository = services.GroupRepository;
         _fileServer = services.FileServer;
         _logger = services.Logger;
         _discoveryService.UsersChanged += OnDiscoveryUsersChanged;
@@ -236,6 +255,7 @@ public sealed partial class MainWindowViewModel : ViewModelBase
 
         RefreshConversationEncryptionState();
         UpdateCurrentSessionHeader();
+        CanDeleteSelectedGroup = value.IsGroupSession;
         value.UnreadCount = 0;
         RefreshSelectionState(value);
         RefreshUnreadState();
@@ -255,7 +275,7 @@ public sealed partial class MainWindowViewModel : ViewModelBase
 
     private async Task SetConversationEncryptionAsync(bool isEnabled)
     {
-        if (SelectedUser is null || SelectedUser.UserId == NetworkConstants.BroadcastSessionId)
+        if (SelectedUser is null || SelectedUser.UserId == NetworkConstants.BroadcastSessionId || SelectedUser.IsGroupSession)
         {
             RefreshConversationEncryptionState();
             return;
@@ -332,6 +352,12 @@ public sealed partial class MainWindowViewModel : ViewModelBase
             return;
         }
 
+        if (SelectedUser.IsGroupSession)
+        {
+            ApplyConversationEncryptionState(false, false, "群组暂不支持端到端加密", "群组消息会点对点发送给当前在线成员。");
+            return;
+        }
+
         var state = _messageService.GetEncryptionState(SelectedUser.UserId);
         var tip = string.IsNullOrWhiteSpace(state.Fingerprint)
             ? "开启后会使用临时 ECDH 密钥协商与 AES-GCM 加密私聊文本。"
@@ -371,7 +397,9 @@ public sealed partial class MainWindowViewModel : ViewModelBase
             return;
         }
 
-        CurrentSessionSubtitle = $"{SelectedUser.DepartmentText} · {SelectedUser.IpAddress} · {SelectedUser.StatusText} · {ConversationEncryptionStatus}";
+        CurrentSessionSubtitle = SelectedUser.IsGroupSession
+            ? $"{SelectedUser.GroupKindText} · {SelectedUser.GroupMemberCount} 人 · 点对点多人会话"
+            : $"{SelectedUser.DepartmentText} · {SelectedUser.IpAddress} · {SelectedUser.StatusText} · {ConversationEncryptionStatus}";
     }
 
     [RelayCommand]
@@ -389,7 +417,9 @@ public sealed partial class MainWindowViewModel : ViewModelBase
             return;
         }
 
-        var kind = SelectedUser.UserId == NetworkConstants.BroadcastSessionId
+        var kind = SelectedUser.IsGroupSession
+            ? MessageKind.Group
+            : SelectedUser.UserId == NetworkConstants.BroadcastSessionId
             ? MessageKind.Broadcast
             : MessageKind.Private;
 
@@ -427,7 +457,22 @@ public sealed partial class MainWindowViewModel : ViewModelBase
 
         try
         {
-            if (kind == MessageKind.Broadcast)
+            if (kind == MessageKind.Group)
+            {
+                var payload = new GroupMessagePayload(
+                    message.MessageId,
+                    SelectedUser.UserId,
+                    SelectedUser.Nickname,
+                    SelectedUser.GroupKind,
+                    SelectedUser.GroupMemberIds.ToArray(),
+                    LocalNickname,
+                    content);
+                var result = await _messageService.SendGroupMessageAsync(_settings, ResolveGroupReceivers(SelectedUser), payload);
+                StatusMessage = result.FailureCount == 0
+                    ? $"群组消息已发送给 {result.SuccessCount} 个在线成员。"
+                    : $"群组消息已发送 {result.SuccessCount} 人，失败 {result.FailureCount} 人。";
+            }
+            else if (kind == MessageKind.Broadcast)
             {
                 var result = await _messageService.BroadcastAsync(_settings, OnlineUsers.Select(ToUserInfo), content);
                 StatusMessage = result.FailureCount == 0
@@ -594,6 +639,104 @@ public sealed partial class MainWindowViewModel : ViewModelBase
     }
 
     [RelayCommand]
+    private void OpenGroupPane()
+    {
+        GroupDraftName = $"群组 {DateTimeOffset.Now:HHmm}";
+        IsPermanentGroupDraft = true;
+        GroupDraftStatus = string.Empty;
+        ReplaceCollection(
+            GroupMemberCandidates,
+            OnlineUsers
+                .Where(user => !user.IsGroupSession && user.UserId != _settings.UserId)
+                .OrderByDescending(user => user.Status == UserStatus.Online)
+                .ThenBy(user => user.DepartmentText, StringComparer.OrdinalIgnoreCase)
+                .ThenBy(user => user.Nickname, StringComparer.OrdinalIgnoreCase)
+                .Select(user => new GroupMemberCandidateViewModel
+                {
+                    UserId = user.UserId,
+                    Nickname = user.Nickname,
+                    Department = user.DepartmentText,
+                    Status = user.Status,
+                    IsSelected = user.Status == UserStatus.Online
+                }));
+        IsGroupPaneOpen = true;
+    }
+
+    [RelayCommand]
+    private void CloseGroupPane()
+    {
+        IsGroupPaneOpen = false;
+        GroupDraftStatus = string.Empty;
+    }
+
+    [RelayCommand]
+    private async Task CreateGroupAsync()
+    {
+        var selectedMembers = GroupMemberCandidates
+            .Where(candidate => candidate.IsSelected)
+            .Select(candidate => candidate.UserId)
+            .Distinct(StringComparer.Ordinal)
+            .ToList();
+
+        if (selectedMembers.Count == 0)
+        {
+            GroupDraftStatus = "请至少选择一名联系人。";
+            return;
+        }
+
+        var name = GroupDraftName.Trim();
+        if (string.IsNullOrWhiteSpace(name))
+        {
+            GroupDraftStatus = "请输入群组名称。";
+            return;
+        }
+
+        selectedMembers.Add(_settings.UserId);
+        var group = new ChatGroup
+        {
+            GroupId = Guid.NewGuid().ToString("N"),
+            Name = name,
+            Kind = IsPermanentGroupDraft ? GroupKind.Permanent : GroupKind.Temporary,
+            MemberUserIds = selectedMembers.Distinct(StringComparer.Ordinal).ToArray(),
+            CreatedTime = DateTimeOffset.Now,
+            UpdatedTime = DateTimeOffset.Now
+        };
+
+        var session = EnsureGroupSession(group);
+        if (group.Kind == GroupKind.Permanent)
+        {
+            await _groupRepository.SaveAsync(group);
+        }
+
+        UpsertRecentSession(session, $"{session.GroupKindText} · {session.GroupMemberCount} 人", moveToTop: true);
+        SelectedUser = session;
+        IsGroupPaneOpen = false;
+        StatusMessage = $"{session.GroupKindText}“{session.Nickname}”已创建。";
+        await LoadSessionMessagesAsync(session);
+    }
+
+    [RelayCommand]
+    private async Task DeleteSelectedGroupAsync()
+    {
+        if (SelectedUser is null || !SelectedUser.IsGroupSession)
+        {
+            return;
+        }
+
+        var group = SelectedUser;
+        RecentSessions.Remove(group);
+        if (group.GroupKind == GroupKind.Permanent)
+        {
+            await _groupRepository.DeleteAsync(group.UserId);
+        }
+
+        SelectedUser = RecentSessions.FirstOrDefault();
+        CanDeleteSelectedGroup = SelectedUser?.IsGroupSession == true;
+        StatusMessage = $"已移除群组：{group.Nickname}";
+        RefreshFilteredUsers();
+    }
+
+    [RelayCommand]
     private void ToggleEmojiPicker()
     {
         IsEmojiPickerOpen = !IsEmojiPickerOpen;
@@ -703,9 +846,9 @@ public sealed partial class MainWindowViewModel : ViewModelBase
     [RelayCommand]
     private async Task AttachFileAsync()
     {
-        if (SelectedUser is null || SelectedUser.UserId == NetworkConstants.BroadcastSessionId)
+        if (SelectedUser is null || SelectedUser.UserId == NetworkConstants.BroadcastSessionId || SelectedUser.IsGroupSession)
         {
-            StatusMessage = "请先选择一个在线用户再发送文件。";
+            StatusMessage = "请先选择一个在线用户再发送文件；群组文件发送会在后续支持。";
             return;
         }
 
@@ -721,9 +864,9 @@ public sealed partial class MainWindowViewModel : ViewModelBase
     [RelayCommand]
     private async Task AttachImageAsync()
     {
-        if (SelectedUser is null || SelectedUser.UserId == NetworkConstants.BroadcastSessionId)
+        if (SelectedUser is null || SelectedUser.UserId == NetworkConstants.BroadcastSessionId || SelectedUser.IsGroupSession)
         {
-            StatusMessage = "请先选择一个在线用户再发送图片。";
+            StatusMessage = "请先选择一个在线用户再发送图片；群组图片发送会在后续支持。";
             return;
         }
 
@@ -900,6 +1043,7 @@ public sealed partial class MainWindowViewModel : ViewModelBase
             var initializer = new DatabaseInitializer(new SqliteConnectionFactory());
             await initializer.InitializeAsync();
             await LoadKnownUsersAsync();
+            await LoadPermanentGroupsAsync();
             EnsurePortsAvailable(_settings);
             await _discoveryService.StartAsync(_settings);
             await _messageService.StartAsync(_settings);
@@ -1010,6 +1154,12 @@ public sealed partial class MainWindowViewModel : ViewModelBase
             return;
         }
 
+        if (packet.Type == PacketType.GroupMessage)
+        {
+            await HandleGroupMessageAsync(packet);
+            return;
+        }
+
         if (packet.Type is not (PacketType.PrivateMessage or PacketType.BroadcastMessage))
         {
             return;
@@ -1071,6 +1221,78 @@ public sealed partial class MainWindowViewModel : ViewModelBase
             kind == MessageKind.Broadcast ? "收到广播消息" : $"收到 {senderName} 的消息",
             payload.Content,
             sessionId);
+    }
+
+    private async Task HandleGroupMessageAsync(NetworkPacket packet)
+    {
+        var payload = JsonSerializer.Deserialize(packet.PayloadJson, LanTalkJsonContext.Default.GroupMessagePayload);
+        if (payload is null || string.IsNullOrWhiteSpace(payload.GroupId))
+        {
+            return;
+        }
+
+        var memberIds = payload.MemberUserIds
+            .Append(_settings.UserId)
+            .Append(packet.FromUserId)
+            .Where(id => !string.IsNullOrWhiteSpace(id))
+            .Distinct(StringComparer.Ordinal)
+            .ToArray();
+        var group = new ChatGroup
+        {
+            GroupId = payload.GroupId,
+            Name = string.IsNullOrWhiteSpace(payload.GroupName) ? "未命名群组" : payload.GroupName,
+            Kind = payload.GroupKind,
+            MemberUserIds = memberIds,
+            CreatedTime = DateTimeOffset.Now,
+            UpdatedTime = DateTimeOffset.Now
+        };
+        var session = EnsureGroupSession(group);
+        if (group.Kind == GroupKind.Permanent)
+        {
+            await _groupRepository.SaveAsync(group);
+        }
+
+        var senderName = string.IsNullOrWhiteSpace(payload.SenderNickname)
+            ? ResolveUserName(packet.FromUserId)
+            : payload.SenderNickname;
+        var message = new ChatMessage
+        {
+            MessageId = payload.MessageId,
+            SessionId = payload.GroupId,
+            SenderId = packet.FromUserId,
+            ReceiverId = payload.GroupId,
+            Kind = MessageKind.Group,
+            Content = payload.Content,
+            SendTime = packet.Time,
+            IsMine = false
+        };
+
+        if (_settings.SaveChatHistory)
+        {
+            await _chatHistoryService.SaveMessageAsync(message);
+        }
+
+        if (SelectedUser?.UserId == payload.GroupId)
+        {
+            if (IsMessageSearchActive())
+            {
+                await SearchSessionMessagesAsync(session, MessageSearchText);
+            }
+            else
+            {
+                Messages.Add(ToMessageViewModel(message, senderName));
+            }
+        }
+        else
+        {
+            session.UnreadCount++;
+            RefreshUnreadState();
+        }
+
+        UpsertRecentSession(session, $"{senderName}: {payload.Content}", moveToTop: true);
+        RefreshUnreadState();
+        StatusMessage = $"收到群组“{session.Nickname}”的新消息。";
+        RequestNotification($"群组 {session.Nickname}", $"{senderName}: {payload.Content}", payload.GroupId);
     }
 
     private async Task HandleFileRequestAsync(NetworkPacket packet)
@@ -1334,6 +1556,43 @@ public sealed partial class MainWindowViewModel : ViewModelBase
         return created;
     }
 
+    private OnlineUserViewModel EnsureGroupSession(ChatGroup group)
+    {
+        var existing = RecentSessions.FirstOrDefault(session => session.UserId == group.GroupId);
+        if (existing is null)
+        {
+            existing = new OnlineUserViewModel
+            {
+                UserId = group.GroupId,
+                Nickname = string.IsNullOrWhiteSpace(group.Name) ? "未命名群组" : group.Name,
+                Department = "群组",
+                IpAddress = "多人会话",
+                Status = UserStatus.Online,
+                IsGroupSession = true,
+                GroupKind = group.Kind,
+                LastActiveTime = group.UpdatedTime,
+                LastMessage = $"{(group.Kind == GroupKind.Permanent ? "永久群组" : "临时群组")} · {group.MemberUserIds.Count} 人"
+            };
+            RecentSessions.Add(existing);
+        }
+        else
+        {
+            existing.Nickname = string.IsNullOrWhiteSpace(group.Name) ? existing.Nickname : group.Name;
+            existing.Department = "群组";
+            existing.IpAddress = "多人会话";
+            existing.IsGroupSession = true;
+            existing.GroupKind = group.Kind;
+            existing.Status = UserStatus.Online;
+            existing.LastActiveTime = group.UpdatedTime > existing.LastActiveTime ? group.UpdatedTime : existing.LastActiveTime;
+        }
+
+        existing.GroupMemberIds.Clear();
+        existing.GroupMemberIds.AddRange(group.MemberUserIds.Where(id => !string.IsNullOrWhiteSpace(id)).Distinct(StringComparer.Ordinal));
+        existing.RefreshGroupMetadata();
+        RefreshFilteredUsers();
+        return existing;
+    }
+
     private OnlineUserViewModel UpsertOnlineUser(UserInfo user)
     {
         var existing = OnlineUsers.FirstOrDefault(item => item.UserId == user.UserId);
@@ -1420,6 +1679,18 @@ public sealed partial class MainWindowViewModel : ViewModelBase
         RefreshFilteredUsers();
     }
 
+    private async Task LoadPermanentGroupsAsync()
+    {
+        var groups = await _groupRepository.LoadAllAsync();
+        foreach (var group in groups)
+        {
+            var session = EnsureGroupSession(group);
+            UpsertRecentSession(session, session.LastMessage, moveToTop: false);
+        }
+
+        RefreshFilteredUsers();
+    }
+
     private void RefreshFilteredUsers()
     {
         var query = SearchText.Trim();
@@ -1472,6 +1743,15 @@ public sealed partial class MainWindowViewModel : ViewModelBase
     private void RefreshUnreadState()
     {
         TotalUnreadCount = RecentSessions.Sum(session => session.UnreadCount);
+    }
+
+    private IEnumerable<UserInfo> ResolveGroupReceivers(OnlineUserViewModel group)
+    {
+        var memberIds = group.GroupMemberIds.ToHashSet(StringComparer.Ordinal);
+        return OnlineUsers
+            .Where(user => memberIds.Contains(user.UserId) && user.UserId != _settings.UserId)
+            .Select(ToUserInfo)
+            .ToArray();
     }
 
     private void ReorderRecentSessions()
@@ -1614,6 +1894,28 @@ public sealed partial class MainWindowViewModel : ViewModelBase
             return;
         }
 
+        if (user.IsGroupSession)
+        {
+            var groupHistory = await _chatHistoryService.LoadRecentMessagesAsync(user.UserId, cancellationToken);
+            foreach (var message in groupHistory)
+            {
+                Messages.Add(ToMessageViewModel(message, message.IsMine ? LocalNickname : ResolveUserName(message.SenderId)));
+            }
+
+            if (Messages.Count == 0)
+            {
+                Messages.Add(new ChatMessageViewModel
+                {
+                    SenderName = user.Nickname,
+                    Content = $"这里是“{user.Nickname}”多人会话，消息会点对点发送给当前在线成员。",
+                    TimeText = DateTimeOffset.Now.ToString("HH:mm"),
+                    Kind = MessageKind.System
+                });
+            }
+
+            return;
+        }
+
         var history = await _chatHistoryService.LoadRecentMessagesAsync(user.UserId, cancellationToken);
         foreach (var message in history)
         {
@@ -1692,6 +1994,8 @@ public sealed partial class MainWindowViewModel : ViewModelBase
                 ? LocalNickname
                 : user.UserId == NetworkConstants.BroadcastSessionId
                     ? "局域网广播"
+                    : user.IsGroupSession
+                        ? ResolveUserName(message.SenderId)
                     : user.Nickname;
             Messages.Add(ToMessageViewModel(message, senderName));
         }
@@ -1948,10 +2252,11 @@ public sealed partial class MainWindowViewModel : ViewModelBase
         var messageService = new MessageService(new TcpMessageClient(), new TcpMessageServer(logger), logger);
         var fileTransferRepository = new FileTransferRepository(connectionFactory);
         var userRepository = new UserRepository(connectionFactory);
+        var groupRepository = new GroupRepository(connectionFactory);
         var fileTransferService = new FileTransferService();
         var fileServer = new TcpFileServer(logger);
 
-        return new AppServices(settingsService, historyService, discoveryService, messageService, fileTransferService, fileTransferRepository, userRepository, fileServer, logger);
+        return new AppServices(settingsService, historyService, discoveryService, messageService, fileTransferService, fileTransferRepository, userRepository, groupRepository, fileServer, logger);
     }
 
     private static async Task<string?> PickFileAsync()
@@ -2094,5 +2399,6 @@ public sealed record AppServices(
     FileTransferService FileTransferService,
     FileTransferRepository FileTransferRepository,
     UserRepository UserRepository,
+    GroupRepository GroupRepository,
     TcpFileServer FileServer,
     ILanTalkLogger Logger);
