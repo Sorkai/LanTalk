@@ -979,20 +979,24 @@ public sealed partial class MainWindowViewModel : ViewModelBase
 
     private async Task SendSelectedGroupFileAsync(OnlineUserViewModel group, string selectedPath, FileInfo fileInfo, bool isImage)
     {
-        var receivers = ResolveGroupReceivers(group)
-            .Where(user => user.Status == UserStatus.Online)
+        var memberIds = group.GroupMemberIds
+            .Where(id => !string.IsNullOrWhiteSpace(id))
+            .Distinct(StringComparer.Ordinal)
             .ToArray();
-        if (receivers.Length == 0)
+        var recipientIds = memberIds
+            .Where(id => id != _settings.UserId)
+            .ToArray();
+        if (recipientIds.Length == 0)
         {
-            StatusMessage = $"群组“{group.Nickname}”暂无在线成员可接收{(isImage ? "图片" : "文件")}。";
+            StatusMessage = $"群组“{group.Nickname}”没有其他成员可接收{(isImage ? "图片" : "文件")}。";
             return;
         }
 
+        var onlineReceivers = ResolveGroupReceivers(group)
+            .Where(user => user.Status == UserStatus.Online)
+            .ToDictionary(user => user.UserId, StringComparer.Ordinal);
+
         var groupMessageId = Guid.NewGuid().ToString("N");
-        var memberIds = group.GroupMemberIds
-            .Append(_settings.UserId)
-            .Distinct(StringComparer.Ordinal)
-            .ToArray();
         var fileMessage = new ChatMessageViewModel
         {
             SenderName = LocalNickname,
@@ -1003,7 +1007,7 @@ public sealed partial class MainWindowViewModel : ViewModelBase
             FileName = fileInfo.Name,
             FileSizeText = FormatFileSize(fileInfo.Length),
             Progress = 0,
-            StatusText = $"准备群发给 {receivers.Length} 个在线成员"
+            StatusText = $"准备群发给 {recipientIds.Length} 个成员"
         };
 
         if (isImage)
@@ -1032,12 +1036,13 @@ public sealed partial class MainWindowViewModel : ViewModelBase
             Messages.Add(fileMessage);
         }
 
-        var state = new GroupFileTransferState(fileMessage, receivers.Length);
+        var state = new GroupFileTransferState(fileMessage, recipientIds.Length);
         UpsertRecentSession(group, isImage ? $"[群组图片] {fileInfo.Name}" : $"[群组文件] {fileInfo.Name}", moveToTop: true);
 
         var success = 0;
+        var queued = 0;
         var failure = 0;
-        foreach (var receiver in receivers)
+        foreach (var recipientId in recipientIds)
         {
             var fileId = Guid.NewGuid().ToString("N");
             var request = new FileTransferRequest(
@@ -1045,7 +1050,7 @@ public sealed partial class MainWindowViewModel : ViewModelBase
                 fileInfo.Name,
                 fileInfo.Length,
                 _settings.UserId,
-                receiver.UserId,
+                recipientId,
                 _settings.FilePort,
                 isImage,
                 group.UserId,
@@ -1055,21 +1060,33 @@ public sealed partial class MainWindowViewModel : ViewModelBase
                 groupMessageId);
 
             _outgoingFilePaths[fileId] = selectedPath;
-            _outgoingFileReceivers[fileId] = receiver;
             _outgoingFileMessages[fileId] = fileMessage;
             _outgoingGroupFileStates[fileId] = state;
+
+            var knownReceiver = onlineReceivers.TryGetValue(recipientId, out var onlineReceiver)
+                ? onlineReceiver
+                : ResolveKnownUserInfo(recipientId);
+            _outgoingFileReceivers[fileId] = knownReceiver;
 
             await _fileTransferRepository.SaveAsync(new FileTransferRecord
             {
                 FileId = fileId,
                 SenderId = _settings.UserId,
-                ReceiverId = receiver.UserId,
+                ReceiverId = recipientId,
                 FileName = fileInfo.Name,
                 FileSize = fileInfo.Length,
                 SavePath = selectedPath,
                 Status = FileTransferStatus.Pending,
                 TransferTime = DateTimeOffset.Now
             });
+
+            if (!onlineReceivers.TryGetValue(recipientId, out var receiver))
+            {
+                await QueueGroupFileDeliveryAsync(recipientId, request, selectedPath, "成员当前离线，等待重新上线后补发。");
+                state.MarkQueued(fileId);
+                queued++;
+                continue;
+            }
 
             try
             {
@@ -1080,16 +1097,16 @@ public sealed partial class MainWindowViewModel : ViewModelBase
             catch (Exception ex)
             {
                 failure++;
-                state.MarkFailed(fileId);
-                _logger.Warning($"群组{(isImage ? "图片" : "文件")}请求发送给 {receiver.Nickname}({receiver.IpAddress}) 失败：{ex.Message}");
-                await SaveOutgoingFileStatusAsync(fileId, FileTransferStatus.Failed);
+                await QueueGroupFileDeliveryAsync(recipientId, request, selectedPath, ex.Message);
+                state.MarkQueued(fileId);
+                _logger.Warning($"群组{(isImage ? "图片" : "文件")}请求发送给 {receiver.Nickname}({receiver.IpAddress}) 失败，已加入离线补发队列：{ex.Message}");
             }
         }
 
         state.Apply();
-        StatusMessage = failure == 0
+        StatusMessage = queued == 0 && failure == 0
             ? $"群组{(isImage ? "图片" : "文件")}请求已发送给 {success} 个在线成员。"
-            : $"群组{(isImage ? "图片" : "文件")}请求已发送 {success} 人，失败 {failure} 人。";
+            : $"群组{(isImage ? "图片" : "文件")}请求已发送 {success} 人，离线补发 {queued + failure} 人。";
     }
 
     private static string? ValidatePorts(SettingsViewModel settings)
@@ -1971,6 +1988,27 @@ public sealed partial class MainWindowViewModel : ViewModelBase
             .ToArray();
     }
 
+    private UserInfo ResolveKnownUserInfo(string userId)
+    {
+        var user = OnlineUsers.FirstOrDefault(item => item.UserId == userId);
+        if (user is not null)
+        {
+            return ToUserInfo(user);
+        }
+
+        return new UserInfo
+        {
+            UserId = userId,
+            Nickname = userId,
+            Department = NetworkConstants.DefaultDepartment,
+            IpAddress = string.Empty,
+            MessagePort = _settings.MessagePort,
+            FilePort = _settings.FilePort,
+            Status = UserStatus.Offline,
+            LastSeenTime = DateTimeOffset.Now
+        };
+    }
+
     private async Task<GroupQueuedSendResult> SendGroupMessageWithOfflineQueueAsync(
         OnlineUserViewModel group,
         GroupMessagePayload payload,
@@ -2036,6 +2074,26 @@ public sealed partial class MainWindowViewModel : ViewModelBase
         }, cancellationToken);
     }
 
+    private Task QueueGroupFileDeliveryAsync(
+        string recipientId,
+        FileTransferRequest request,
+        string sourcePath,
+        string reason,
+        CancellationToken cancellationToken = default)
+    {
+        var payloadJson = JsonSerializer.Serialize(request, LanTalkJsonContext.Default.FileTransferRequest);
+        return _outgoingDeliveryRepository.SaveAsync(new OutgoingDeliveryRecord
+        {
+            DeliveryId = CreateDeliveryId(PacketType.FileRequest, recipientId, request.FileId),
+            RecipientId = recipientId,
+            PacketType = PacketType.FileRequest,
+            PayloadJson = payloadJson,
+            SourcePath = sourcePath,
+            CreatedTime = DateTimeOffset.Now,
+            LastError = reason
+        }, cancellationToken);
+    }
+
     private async Task RetryPendingDeliveriesAsync(OnlineUserViewModel user)
     {
         if (user.Status != UserStatus.Online || user.UserId == _settings.UserId)
@@ -2057,28 +2115,15 @@ public sealed partial class MainWindowViewModel : ViewModelBase
             var records = await _outgoingDeliveryRepository.LoadForRecipientAsync(user.UserId);
             foreach (var record in records)
             {
-                if (record.PacketType != PacketType.GroupMessage)
+                if (record.PacketType == PacketType.GroupMessage)
                 {
+                    await RetryGroupMessageDeliveryAsync(receiver, record);
                     continue;
                 }
 
-                var payload = JsonSerializer.Deserialize(record.PayloadJson, LanTalkJsonContext.Default.GroupMessagePayload);
-                if (payload is null)
+                if (record.PacketType == PacketType.FileRequest)
                 {
-                    await _outgoingDeliveryRepository.DeleteAsync(record.DeliveryId);
-                    continue;
-                }
-
-                try
-                {
-                    await _messageService.SendGroupMessageToAsync(_settings, receiver, payload);
-                    await _outgoingDeliveryRepository.DeleteAsync(record.DeliveryId);
-                    StatusMessage = $"已向 {receiver.Nickname} 补发群组“{payload.GroupName}”的离线消息。";
-                }
-                catch (Exception ex)
-                {
-                    await _outgoingDeliveryRepository.MarkAttemptAsync(record.DeliveryId, record.AttemptCount + 1, ex.Message);
-                    _logger.Warning($"离线群组消息补发给 {receiver.Nickname}({receiver.IpAddress}) 失败：{ex.Message}");
+                    await RetryGroupFileDeliveryAsync(receiver, record);
                 }
             }
         }
@@ -2089,6 +2134,99 @@ public sealed partial class MainWindowViewModel : ViewModelBase
                 _retryingDeliveryRecipients.Remove(user.UserId);
             }
         }
+    }
+
+    private async Task RetryGroupMessageDeliveryAsync(UserInfo receiver, OutgoingDeliveryRecord record)
+    {
+        var payload = JsonSerializer.Deserialize(record.PayloadJson, LanTalkJsonContext.Default.GroupMessagePayload);
+        if (payload is null)
+        {
+            await _outgoingDeliveryRepository.DeleteAsync(record.DeliveryId);
+            return;
+        }
+
+        try
+        {
+            await _messageService.SendGroupMessageToAsync(_settings, receiver, payload);
+            await _outgoingDeliveryRepository.DeleteAsync(record.DeliveryId);
+            StatusMessage = $"已向 {receiver.Nickname} 补发群组“{payload.GroupName}”的离线消息。";
+        }
+        catch (Exception ex)
+        {
+            await _outgoingDeliveryRepository.MarkAttemptAsync(record.DeliveryId, record.AttemptCount + 1, ex.Message);
+            _logger.Warning($"离线群组消息补发给 {receiver.Nickname}({receiver.IpAddress}) 失败：{ex.Message}");
+        }
+    }
+
+    private async Task RetryGroupFileDeliveryAsync(UserInfo receiver, OutgoingDeliveryRecord record)
+    {
+        var request = JsonSerializer.Deserialize(record.PayloadJson, LanTalkJsonContext.Default.FileTransferRequest);
+        if (request is null)
+        {
+            await _outgoingDeliveryRepository.DeleteAsync(record.DeliveryId);
+            return;
+        }
+
+        if (string.IsNullOrWhiteSpace(record.SourcePath) || !File.Exists(record.SourcePath))
+        {
+            var reason = $"源文件不可用，无法补发：{request.FileName}";
+            await _outgoingDeliveryRepository.MarkAttemptAsync(record.DeliveryId, record.AttemptCount + 1, reason);
+            StatusMessage = reason;
+            _logger.Warning(reason);
+            return;
+        }
+
+        var message = EnsureOutgoingFileMessageForRetry(request, record.SourcePath);
+        _outgoingFilePaths[request.FileId] = record.SourcePath;
+        _outgoingFileReceivers[request.FileId] = receiver;
+        _outgoingFileMessages[request.FileId] = message;
+
+        try
+        {
+            await _messageService.SendFileRequestAsync(_settings, receiver, request);
+            await _outgoingDeliveryRepository.DeleteAsync(record.DeliveryId);
+            message.StatusText = "离线补发请求已发送";
+            StatusMessage = $"已向 {receiver.Nickname} 补发群组附件请求：{request.FileName}";
+        }
+        catch (Exception ex)
+        {
+            await _outgoingDeliveryRepository.MarkAttemptAsync(record.DeliveryId, record.AttemptCount + 1, ex.Message);
+            message.StatusText = "离线补发失败";
+            _logger.Warning($"离线群组附件补发给 {receiver.Nickname}({receiver.IpAddress}) 失败：{ex.Message}");
+        }
+    }
+
+    private ChatMessageViewModel EnsureOutgoingFileMessageForRetry(FileTransferRequest request, string sourcePath)
+    {
+        if (_outgoingFileMessages.TryGetValue(request.FileId, out var existing))
+        {
+            return existing;
+        }
+
+        var message = new ChatMessageViewModel
+        {
+            SenderName = LocalNickname,
+            Content = request.IsImage ? string.Empty : $"群组文件：{request.FileName}",
+            TimeText = DateTimeOffset.Now.ToString("HH:mm"),
+            IsMine = true,
+            Kind = request.IsImage ? MessageKind.Image : MessageKind.File,
+            FileName = request.FileName,
+            FileSizeText = FormatFileSize(request.FileSize),
+            Progress = 0,
+            StatusText = "等待离线补发"
+        };
+
+        if (request.IsImage)
+        {
+            message.SetImagePath(sourcePath);
+        }
+
+        if (!string.IsNullOrWhiteSpace(request.GroupId) && SelectedUser?.UserId == request.GroupId)
+        {
+            Messages.Add(message);
+        }
+
+        return message;
     }
 
     private static string CreateDeliveryId(PacketType packetType, string recipientId, string messageId)
@@ -2741,6 +2879,7 @@ public sealed partial class MainWindowViewModel : ViewModelBase
     private sealed class GroupFileTransferState
     {
         private readonly HashSet<string> requestSentFileIds = new(StringComparer.Ordinal);
+        private readonly HashSet<string> queuedFileIds = new(StringComparer.Ordinal);
         private readonly HashSet<string> acceptedFileIds = new(StringComparer.Ordinal);
         private readonly HashSet<string> rejectedFileIds = new(StringComparer.Ordinal);
         private readonly HashSet<string> completedFileIds = new(StringComparer.Ordinal);
@@ -2759,6 +2898,12 @@ public sealed partial class MainWindowViewModel : ViewModelBase
         public void MarkRequestSent(string fileId)
         {
             requestSentFileIds.Add(fileId);
+            queuedFileIds.Remove(fileId);
+        }
+
+        public void MarkQueued(string fileId)
+        {
+            queuedFileIds.Add(fileId);
         }
 
         public void MarkAccepted(string fileId)
@@ -2787,26 +2932,27 @@ public sealed partial class MainWindowViewModel : ViewModelBase
             var completed = completedFileIds.Count;
             var rejected = rejectedFileIds.Count;
             var failed = failedFileIds.Count;
+            var queued = queuedFileIds.Count;
             var sent = requestSentFileIds.Count;
 
             if (activeProgress is not null)
             {
-                return $"群发中 {activeProgress:0}% · 完成 {completed}/{TotalCount}，拒绝 {rejected}，失败 {failed}";
+                return $"群发中 {activeProgress:0}% · 完成 {completed}/{TotalCount}，待补发 {queued}，拒绝 {rejected}，失败 {failed}";
             }
 
             if (TotalCount > 0 && completed + rejected + failed >= TotalCount)
             {
                 return failed == 0 && rejected == 0
                     ? $"群发完成 · {completed}/{TotalCount} 已接收"
-                    : $"群发结束 · 完成 {completed}/{TotalCount}，拒绝 {rejected}，失败 {failed}";
+                    : $"群发结束 · 完成 {completed}/{TotalCount}，待补发 {queued}，拒绝 {rejected}，失败 {failed}";
             }
 
             if (acceptedFileIds.Count > 0)
             {
-                return $"群发进行中 · 完成 {completed}/{TotalCount}，已接受 {acceptedFileIds.Count}，拒绝 {rejected}，失败 {failed}";
+                return $"群发进行中 · 完成 {completed}/{TotalCount}，已接受 {acceptedFileIds.Count}，待补发 {queued}，拒绝 {rejected}，失败 {failed}";
             }
 
-            return $"群发请求 {sent}/{TotalCount} · 拒绝 {rejected}，失败 {failed}";
+            return $"群发请求 {sent}/{TotalCount} · 待补发 {queued}，拒绝 {rejected}，失败 {failed}";
         }
 
         public void Apply()

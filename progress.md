@@ -552,3 +552,16 @@
 - 验证结果：
   - `dotnet build LanTalk.sln -v:minimal`：0 警告，0 错误。
   - `dotnet test LanTalk.sln -v:minimal`：48 个测试全部通过。
+
+### 阶段 19：群组附件离线补发
+- **状态：** 已完成并验证通过。
+- 已执行操作：
+  - `OutgoingDeliveryRecord` 和 `OutgoingDeliveries` 表新增 `SourcePath`，用于保存发送方本地源文件路径。
+  - `DatabaseInitializer` 增加 `OutgoingDeliveries.SourcePath` 轻量迁移，兼容已存在的队列表。
+  - 群组附件发送覆盖全部非本人群成员：在线成员立即发送，离线或发送失败成员进入附件补发队列。
+  - 成员重新上线后，自动读取 `FileTransferRequest + SourcePath` 并重发附件请求；成功后删除队列记录。
+  - 源文件缺失时保留队列记录并更新错误原因，状态栏提示源文件不可用。
+- 验证结果：
+  - `dotnet build LanTalk.sln -v:minimal`：0 警告，0 错误。
+  - 初次 `dotnet test LanTalk.sln -v:minimal` 失败：新增 SQLite 迁移测试在 Windows 上未释放验证连接就删除临时库。
+  - 收紧测试连接作用域后，`dotnet test LanTalk.sln -v:minimal`：49 个测试全部通过。

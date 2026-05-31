@@ -22,14 +22,15 @@ public sealed class OutgoingDeliveryRepository
         command.CommandText =
             """
             INSERT OR REPLACE INTO OutgoingDeliveries
-                (DeliveryId, RecipientId, PacketType, PayloadJson, CreatedTime, LastAttemptTime, AttemptCount, LastError)
+                (DeliveryId, RecipientId, PacketType, PayloadJson, SourcePath, CreatedTime, LastAttemptTime, AttemptCount, LastError)
             VALUES
-                ($deliveryId, $recipientId, $packetType, $payloadJson, $createdTime, $lastAttemptTime, $attemptCount, $lastError);
+                ($deliveryId, $recipientId, $packetType, $payloadJson, $sourcePath, $createdTime, $lastAttemptTime, $attemptCount, $lastError);
             """;
         command.Parameters.AddWithValue("$deliveryId", record.DeliveryId);
         command.Parameters.AddWithValue("$recipientId", record.RecipientId);
         command.Parameters.AddWithValue("$packetType", record.PacketType.ToString());
         command.Parameters.AddWithValue("$payloadJson", record.PayloadJson);
+        command.Parameters.AddWithValue("$sourcePath", (object?)record.SourcePath ?? DBNull.Value);
         command.Parameters.AddWithValue("$createdTime", record.CreatedTime.ToString("O"));
         command.Parameters.AddWithValue("$lastAttemptTime", record.LastAttemptTime?.ToString("O") ?? (object)DBNull.Value);
         command.Parameters.AddWithValue("$attemptCount", record.AttemptCount);
@@ -49,7 +50,7 @@ public sealed class OutgoingDeliveryRepository
         await using var command = connection.CreateCommand();
         command.CommandText =
             """
-            SELECT DeliveryId, RecipientId, PacketType, PayloadJson, CreatedTime, LastAttemptTime, AttemptCount, LastError
+            SELECT DeliveryId, RecipientId, PacketType, PayloadJson, SourcePath, CreatedTime, LastAttemptTime, AttemptCount, LastError
             FROM OutgoingDeliveries
             WHERE RecipientId = $recipientId
             ORDER BY CreatedTime
@@ -69,10 +70,11 @@ public sealed class OutgoingDeliveryRepository
                 RecipientId = reader.GetString(1),
                 PacketType = Enum.Parse<PacketType>(reader.GetString(2)),
                 PayloadJson = reader.GetString(3),
-                CreatedTime = DateTimeOffset.Parse(reader.GetString(4)),
-                LastAttemptTime = reader.IsDBNull(5) ? null : DateTimeOffset.Parse(reader.GetString(5)),
-                AttemptCount = reader.GetInt32(6),
-                LastError = reader.IsDBNull(7) ? null : reader.GetString(7)
+                SourcePath = reader.IsDBNull(4) ? null : reader.GetString(4),
+                CreatedTime = DateTimeOffset.Parse(reader.GetString(5)),
+                LastAttemptTime = reader.IsDBNull(6) ? null : DateTimeOffset.Parse(reader.GetString(6)),
+                AttemptCount = reader.GetInt32(7),
+                LastError = reader.IsDBNull(8) ? null : reader.GetString(8)
             });
         }
 

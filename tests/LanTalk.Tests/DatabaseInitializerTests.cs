@@ -60,4 +60,52 @@ public sealed class DatabaseInitializerTests
         SqliteConnection.ClearAllPools();
         File.Delete(databasePath);
     }
+
+    [Fact]
+    public async Task InitializeAsync_ShouldMigrateOutgoingDeliveriesSourcePathColumn()
+    {
+        var databasePath = Path.Combine(Path.GetTempPath(), $"lantalk-migrate-delivery-{Guid.NewGuid():N}.db");
+        var factory = new SqliteConnectionFactory(databasePath);
+
+        await using (var connection = factory.CreateConnection())
+        {
+            await connection.OpenAsync();
+            await using var command = connection.CreateCommand();
+            command.CommandText =
+                """
+                CREATE TABLE OutgoingDeliveries (
+                    DeliveryId TEXT PRIMARY KEY,
+                    RecipientId TEXT NOT NULL,
+                    PacketType TEXT NOT NULL,
+                    PayloadJson TEXT NOT NULL,
+                    CreatedTime TEXT NOT NULL,
+                    LastAttemptTime TEXT,
+                    AttemptCount INTEGER NOT NULL,
+                    LastError TEXT
+                );
+                """;
+            await command.ExecuteNonQueryAsync();
+        }
+
+        var initializer = new DatabaseInitializer(factory);
+        await initializer.InitializeAsync();
+
+        var hasSourcePath = false;
+        await using (var verifyConnection = factory.CreateConnection())
+        {
+            await verifyConnection.OpenAsync();
+            await using var verifyCommand = verifyConnection.CreateCommand();
+            verifyCommand.CommandText = "PRAGMA table_info(OutgoingDeliveries);";
+
+            await using var reader = await verifyCommand.ExecuteReaderAsync();
+            while (await reader.ReadAsync())
+            {
+                hasSourcePath |= string.Equals(reader.GetString(1), "SourcePath", StringComparison.OrdinalIgnoreCase);
+            }
+        }
+
+        Assert.True(hasSourcePath);
+        SqliteConnection.ClearAllPools();
+        File.Delete(databasePath);
+    }
 }

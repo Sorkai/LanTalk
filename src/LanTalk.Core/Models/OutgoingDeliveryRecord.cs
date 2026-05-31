@@ -12,6 +12,8 @@ public sealed class OutgoingDeliveryRecord
 
     public string PayloadJson { get; init; } = string.Empty;
 
+    public string? SourcePath { get; init; }
+
     public DateTimeOffset CreatedTime { get; init; } = DateTimeOffset.Now;
 
     public DateTimeOffset? LastAttemptTime { get; init; }

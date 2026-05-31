@@ -24,6 +24,7 @@ public sealed class DatabaseInitializer
         }
 
         await EnsureKnownUsersDepartmentColumnAsync(connection, cancellationToken).ConfigureAwait(false);
+        await EnsureOutgoingDeliveriesSourcePathColumnAsync(connection, cancellationToken).ConfigureAwait(false);
     }
 
     private static async Task EnsureKnownUsersDepartmentColumnAsync(SqliteConnection connection, CancellationToken cancellationToken)
@@ -42,6 +43,25 @@ public sealed class DatabaseInitializer
 
         await using var alterCommand = connection.CreateCommand();
         alterCommand.CommandText = "ALTER TABLE KnownUsers ADD COLUMN Department TEXT NOT NULL DEFAULT '默认部门';";
+        await alterCommand.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
+    }
+
+    private static async Task EnsureOutgoingDeliveriesSourcePathColumnAsync(SqliteConnection connection, CancellationToken cancellationToken)
+    {
+        await using var tableInfoCommand = connection.CreateCommand();
+        tableInfoCommand.CommandText = "PRAGMA table_info(OutgoingDeliveries);";
+
+        await using var reader = await tableInfoCommand.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
+        while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false))
+        {
+            if (string.Equals(reader.GetString(1), "SourcePath", StringComparison.OrdinalIgnoreCase))
+            {
+                return;
+            }
+        }
+
+        await using var alterCommand = connection.CreateCommand();
+        alterCommand.CommandText = "ALTER TABLE OutgoingDeliveries ADD COLUMN SourcePath TEXT;";
         await alterCommand.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
     }
 
@@ -99,6 +119,7 @@ public sealed class DatabaseInitializer
             RecipientId TEXT NOT NULL,
             PacketType TEXT NOT NULL,
             PayloadJson TEXT NOT NULL,
+            SourcePath TEXT,
             CreatedTime TEXT NOT NULL,
             LastAttemptTime TEXT,
             AttemptCount INTEGER NOT NULL,

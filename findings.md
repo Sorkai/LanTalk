@@ -336,6 +336,12 @@
 - 队列记录使用 `PacketType + RecipientId + MessageId` 组成稳定 `DeliveryId`，避免同一条群组消息重复入队。
 - 本阶段只覆盖群组文本；群组附件补发需要额外保存源文件路径并处理源文件已删除、接收方再次确认等状态。
 
+## 2026-05-31 群组附件离线补发实现发现
+- `OutgoingDeliveryRecord` 新增 `SourcePath`，`OutgoingDeliveries` 表通过轻量迁移补齐 `SourcePath` 列，兼容已创建过旧队列表的本地数据库。
+- 群组附件发送现在会覆盖全部非本人群成员：在线成员立即发送 `FileRequest`，离线成员或发送失败成员保存 `FileTransferRequest + SourcePath` 到待补发队列。
+- 成员重新上线时会重新发送原 `FileRequest`；发送成功后删除队列记录，接收方仍走原有接收/拒绝/文件流流程。
+- 如果发送方本地源文件已删除或移动，补发会保留队列记录并更新错误原因，避免把附件补发静默当作成功。
+
 ## 资源
 - `C:\pr\LanTalk\AGENTS.md`：主要 Agent / 项目规则。
 - `C:\pr\LanTalk\lan_talk_codex项目说明文档.md`：项目需求、架构、里程碑、验收要求。

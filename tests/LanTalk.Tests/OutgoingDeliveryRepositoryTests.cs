@@ -23,6 +23,7 @@ public sealed class OutgoingDeliveryRepositoryTests
             RecipientId = "user-b",
             PacketType = PacketType.GroupMessage,
             PayloadJson = """{"messageId":"message-a"}""",
+            SourcePath = @"C:\Temp\photo.png",
             CreatedTime = DateTimeOffset.Now
         });
 
@@ -31,6 +32,7 @@ public sealed class OutgoingDeliveryRepositoryTests
         Assert.Single(records);
         Assert.Equal("delivery-a", records[0].DeliveryId);
         Assert.Equal(PacketType.GroupMessage, records[0].PacketType);
+        Assert.Equal(@"C:\Temp\photo.png", records[0].SourcePath);
 
         SqliteConnection.ClearAllPools();
         File.Delete(databasePath);

@@ -52,8 +52,9 @@
 - 群组聊天记录继续写入 `ChatMessages`，其中 `SessionId` 和 `ReceiverId` 使用 `GroupId`。
 - 群组图片/文件复用 `FileRequest`、`FileAccept`、`FileReject`、`FileFinished` 和 TCP 文件端口；发送方为每个在线成员生成独立 `FileId`，接收方仍按单文件确认和流式接收。
 - 群组文件请求会在 `FileTransferRequest` 中追加可选元数据：`GroupId`、`GroupName`、`GroupKind`、`GroupMemberUserIds`、`GroupMessageId`。旧客户端缺少这些字段时会继续按普通文件请求处理。
-- 群组文本离线补发使用发送方本地 SQLite `OutgoingDeliveries` 队列：离线成员或发送失败的成员会保留 `GroupMessagePayload`，对方重新上线后按原群组消息补发，成功后删除队列记录。
-- 群组附件离线补发和群组加密后续扩展。
+- 群组离线补发使用发送方本地 SQLite `OutgoingDeliveries` 队列：离线成员或发送失败的成员会保留 `GroupMessagePayload` 或 `FileTransferRequest`，对方重新上线后自动补发，成功后删除队列记录。
+- 群组附件补发会额外保存发送方本地 `SourcePath`。如果源文件已删除或移动，队列会保留并记录失败原因，不会静默丢弃。
+- 群组加密后续扩展。
 
 ## 文件传输
 - 文件请求通过 TCP 消息端口发送 `FileTransferRequest`。
