@@ -15,6 +15,7 @@ namespace LanTalk.Core.Serialization;
 [JsonSerializable(typeof(FileTransferResponse))]
 [JsonSerializable(typeof(FileTransferFinished))]
 [JsonSerializable(typeof(FileTransferRecord))]
+[JsonSerializable(typeof(ImageMessageContent))]
 [JsonSerializable(typeof(EncryptedMessagePayload))]
 [JsonSerializable(typeof(EncryptionHelloPayload))]
 [JsonSerializable(typeof(EncryptionAckPayload))]

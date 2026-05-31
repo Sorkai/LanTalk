@@ -52,6 +52,37 @@ public sealed class MessageRepositoryTests
         File.Delete(databasePath);
     }
 
+    [Fact]
+    public async Task SaveAsync_ShouldPersistImageMessages()
+    {
+        var databasePath = Path.Combine(Path.GetTempPath(), $"lantalk-{Guid.NewGuid():N}.db");
+        var factory = new SqliteConnectionFactory(databasePath);
+        var initializer = new DatabaseInitializer(factory);
+        var repository = new MessageRepository(factory);
+
+        await initializer.InitializeAsync();
+        await repository.SaveAsync(new ChatMessage
+        {
+            MessageId = "image-a",
+            SessionId = "session-a",
+            SenderId = "local",
+            ReceiverId = "user-a",
+            Kind = MessageKind.Image,
+            Content = """{"fileId":"image-a","fileName":"photo.png","fileSize":1024,"localPath":"C:\\Temp\\photo.png"}""",
+            SendTime = DateTimeOffset.Now,
+            IsMine = true
+        });
+
+        var messages = await repository.LoadRecentMessagesAsync("session-a");
+
+        Assert.Single(messages);
+        Assert.Equal(MessageKind.Image, messages[0].Kind);
+        Assert.Contains("photo.png", messages[0].Content);
+
+        SqliteConnection.ClearAllPools();
+        File.Delete(databasePath);
+    }
+
     private static ChatMessage CreateMessage(string sessionId, string senderId, string content, DateTimeOffset sendTime)
     {
         return new ChatMessage

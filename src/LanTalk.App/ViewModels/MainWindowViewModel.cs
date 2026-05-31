@@ -1,6 +1,9 @@
 using System.Collections.ObjectModel;
 using System.Net;
 using System.Net.Sockets;
+using System.Text.Json;
+using Avalonia.Media;
+using Avalonia.Media.Imaging;
 using Avalonia.Threading;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
@@ -42,6 +45,8 @@ public sealed partial class MainWindowViewModel : ViewModelBase
     private readonly Dictionary<string, ChatMessageViewModel> _incomingFileMessages = new(StringComparer.Ordinal);
     private readonly Dictionary<string, string> _incomingSavePaths = new(StringComparer.Ordinal);
     private readonly HashSet<string> _incomingFinishedNotifications = new(StringComparer.Ordinal);
+    private int _previewImagePixelWidth;
+    private int _previewImagePixelHeight;
     private CancellationTokenSource? _messageSearchCts;
     private bool _isUpdatingEncryptionToggle;
     private CancellationTokenSource? _fileServerCts;
@@ -51,6 +56,10 @@ public sealed partial class MainWindowViewModel : ViewModelBase
 
     [ObservableProperty]
     private string localNickname = "LanTalk 用户";
+
+    public string LocalAvatarText => AvatarService.GetInitial(LocalNickname);
+
+    public IBrush LocalAvatarBrush => AvatarService.CreateBrush($"{_settings.UserId}:{LocalNickname}");
 
     [ObservableProperty]
     private string localDepartment = NetworkConstants.DefaultDepartment;
@@ -115,6 +124,30 @@ public sealed partial class MainWindowViewModel : ViewModelBase
     [ObservableProperty]
     private FileReceiveRequestViewModel? pendingFileRequest;
 
+    [ObservableProperty]
+    private bool isEmojiPickerOpen;
+
+    [ObservableProperty]
+    private bool isImagePreviewOpen;
+
+    [ObservableProperty]
+    private Bitmap? previewImageSource;
+
+    [ObservableProperty]
+    private string previewImageTitle = string.Empty;
+
+    [ObservableProperty]
+    private double previewImageZoom = 1;
+
+    [ObservableProperty]
+    private string previewImageZoomText = "100%";
+
+    [ObservableProperty]
+    private double previewImageDisplayWidth;
+
+    [ObservableProperty]
+    private double previewImageDisplayHeight;
+
     public ObservableCollection<OnlineUserViewModel> OnlineUsers { get; } = [];
 
     public ObservableCollection<OnlineUserViewModel> RecentSessions { get; } = [];
@@ -126,6 +159,13 @@ public sealed partial class MainWindowViewModel : ViewModelBase
     public ObservableCollection<ContactGroupViewModel> ContactGroups { get; } = [];
 
     public ObservableCollection<ChatMessageViewModel> Messages { get; } = [];
+
+    public IReadOnlyList<string> CommonEmojis { get; } =
+    [
+        "😀", "😂", "😊", "😍", "👍", "👏", "🙏", "💪",
+        "🎉", "🔥", "✅", "⭐", "💡", "📌", "☕", "❤️",
+        "😄", "😅", "😉", "😎", "😭", "🤔", "👌", "🚀"
+    ];
 
     public int OnlineCount => OnlineUsers.Count(user => user.Status == UserStatus.Online);
 
@@ -164,6 +204,12 @@ public sealed partial class MainWindowViewModel : ViewModelBase
         RefreshFilteredUsers();
     }
 
+    partial void OnLocalNicknameChanged(string value)
+    {
+        OnPropertyChanged(nameof(LocalAvatarText));
+        OnPropertyChanged(nameof(LocalAvatarBrush));
+    }
+
     partial void OnMessageSearchTextChanged(string value)
     {
         _ = ApplyMessageSearchAsync(value);
@@ -173,6 +219,12 @@ public sealed partial class MainWindowViewModel : ViewModelBase
     {
         UnreadSummary = value == 0 ? "没有未读消息" : $"{value} 条未读消息";
         OnPropertyChanged(nameof(WindowTitle));
+    }
+
+    partial void OnPreviewImageZoomChanged(double value)
+    {
+        PreviewImageZoomText = $"{value * 100:0}%";
+        UpdatePreviewImageSize();
     }
 
     partial void OnSelectedUserChanged(OnlineUserViewModel? value)
@@ -542,6 +594,71 @@ public sealed partial class MainWindowViewModel : ViewModelBase
     }
 
     [RelayCommand]
+    private void ToggleEmojiPicker()
+    {
+        IsEmojiPickerOpen = !IsEmojiPickerOpen;
+    }
+
+    [RelayCommand]
+    private void InsertEmoji(string? emoji)
+    {
+        if (string.IsNullOrWhiteSpace(emoji))
+        {
+            return;
+        }
+
+        DraftMessage += emoji;
+    }
+
+    [RelayCommand]
+    private void OpenImagePreview(ChatMessageViewModel? message)
+    {
+        if (message?.ImageSource is null)
+        {
+            StatusMessage = "图片文件不可用，无法预览。";
+            return;
+        }
+
+        PreviewImageSource = message.ImageSource;
+        PreviewImageTitle = string.IsNullOrWhiteSpace(message.FileName) ? "图片预览" : message.FileName;
+        _previewImagePixelWidth = message.ImagePixelWidth > 0 ? message.ImagePixelWidth : 800;
+        _previewImagePixelHeight = message.ImagePixelHeight > 0 ? message.ImagePixelHeight : 600;
+        PreviewImageZoom = 1;
+        UpdatePreviewImageSize();
+        IsImagePreviewOpen = true;
+    }
+
+    [RelayCommand]
+    private void CloseImagePreview()
+    {
+        IsImagePreviewOpen = false;
+        PreviewImageSource = null;
+        PreviewImageTitle = string.Empty;
+        _previewImagePixelWidth = 0;
+        _previewImagePixelHeight = 0;
+        PreviewImageDisplayWidth = 0;
+        PreviewImageDisplayHeight = 0;
+    }
+
+    [RelayCommand]
+    private void ZoomInImagePreview()
+    {
+        PreviewImageZoom = Math.Min(4, PreviewImageZoom + 0.25);
+    }
+
+    [RelayCommand]
+    private void ZoomOutImagePreview()
+    {
+        PreviewImageZoom = Math.Max(0.25, PreviewImageZoom - 0.25);
+    }
+
+    [RelayCommand]
+    private void ResetImagePreviewZoom()
+    {
+        PreviewImageZoom = 1;
+    }
+
+    [RelayCommand]
     private void SelectNextRecentSession()
     {
         SelectRelativeRecentSession(1);
@@ -598,6 +715,40 @@ public sealed partial class MainWindowViewModel : ViewModelBase
             return;
         }
 
+        await SendSelectedFileAsync(selectedPath, isImage: false);
+    }
+
+    [RelayCommand]
+    private async Task AttachImageAsync()
+    {
+        if (SelectedUser is null || SelectedUser.UserId == NetworkConstants.BroadcastSessionId)
+        {
+            StatusMessage = "请先选择一个在线用户再发送图片。";
+            return;
+        }
+
+        var selectedPath = await PickImageAsync();
+        if (string.IsNullOrWhiteSpace(selectedPath))
+        {
+            return;
+        }
+
+        if (!IsImageFileName(selectedPath))
+        {
+            StatusMessage = "请选择 PNG、JPG、JPEG、GIF、BMP 或 WebP 图片。";
+            return;
+        }
+
+        await SendSelectedFileAsync(selectedPath, isImage: true);
+    }
+
+    private async Task SendSelectedFileAsync(string selectedPath, bool isImage)
+    {
+        if (SelectedUser is null)
+        {
+            return;
+        }
+
         var fileInfo = new FileInfo(selectedPath);
         if (!fileInfo.Exists)
         {
@@ -607,24 +758,43 @@ public sealed partial class MainWindowViewModel : ViewModelBase
 
         var fileId = Guid.NewGuid().ToString("N");
         var receiver = ToUserInfo(SelectedUser);
-        var request = new FileTransferRequest(fileId, fileInfo.Name, fileInfo.Length, _settings.UserId, receiver.UserId, _settings.FilePort);
+        var request = new FileTransferRequest(fileId, fileInfo.Name, fileInfo.Length, _settings.UserId, receiver.UserId, _settings.FilePort, isImage);
         var fileMessage = new ChatMessageViewModel
         {
             SenderName = LocalNickname,
-            Content = "等待接收方确认文件请求。",
+            Content = isImage ? string.Empty : "等待接收方确认文件请求。",
             TimeText = DateTimeOffset.Now.ToString("HH:mm"),
             IsMine = true,
-            Kind = MessageKind.File,
+            Kind = isImage ? MessageKind.Image : MessageKind.File,
             FileName = fileInfo.Name,
             FileSizeText = FormatFileSize(fileInfo.Length),
             Progress = 0,
             StatusText = "等待确认"
         };
 
-        Messages.Add(fileMessage);
+        if (isImage)
+        {
+            fileMessage.SetImagePath(selectedPath);
+        }
+
+        if (_settings.SaveChatHistory && isImage)
+        {
+            await _chatHistoryService.SaveMessageAsync(CreateImageChatMessage(fileId, receiver.UserId, fileInfo, selectedPath, isMine: true));
+        }
+
+        if (IsMessageSearchActive() && isImage)
+        {
+            await SearchSessionMessagesAsync(SelectedUser, MessageSearchText);
+        }
+        else
+        {
+            Messages.Add(fileMessage);
+        }
+
         _outgoingFilePaths[fileId] = selectedPath;
         _outgoingFileReceivers[fileId] = receiver;
         _outgoingFileMessages[fileId] = fileMessage;
+        UpsertRecentSession(SelectedUser, isImage ? $"[图片] {fileInfo.Name}" : $"[文件] {fileInfo.Name}", moveToTop: true);
 
         await _fileTransferRepository.SaveAsync(new FileTransferRecord
         {
@@ -641,14 +811,16 @@ public sealed partial class MainWindowViewModel : ViewModelBase
         try
         {
             await _messageService.SendFileRequestAsync(_settings, receiver, request);
-            StatusMessage = "文件请求已发送。接收方同意后开始传输。";
+            StatusMessage = isImage
+                ? "图片请求已发送。接收方同意后开始传输。"
+                : "文件请求已发送。接收方同意后开始传输。";
             fileMessage.StatusText = "请求已发送";
         }
         catch (Exception ex)
         {
-            _logger.Error("文件请求发送失败。", ex);
+            _logger.Error(isImage ? "图片请求发送失败。" : "文件请求发送失败。", ex);
             fileMessage.StatusText = "发送请求失败";
-            StatusMessage = $"文件请求发送失败：{ex.Message}";
+            StatusMessage = isImage ? $"图片请求发送失败：{ex.Message}" : $"文件请求发送失败：{ex.Message}";
         }
     }
 
@@ -719,6 +891,7 @@ public sealed partial class MainWindowViewModel : ViewModelBase
             _settings = await _settingsService.LoadAsync();
             AppThemeService.Apply(_settings);
             LocalNickname = _settings.Nickname;
+            OnPropertyChanged(nameof(LocalAvatarBrush));
             LocalDepartment = _settings.Department;
             LocalIpAddress = NetworkInterfaceHelper.GetLocalIpAddress();
             LocalStatusText = "在线";
@@ -908,6 +1081,7 @@ public sealed partial class MainWindowViewModel : ViewModelBase
             return;
         }
 
+        var isImage = request.IsImage || IsImageFileName(request.FileName);
         _pendingFileRequests[request.FileId] = request;
         var sender = ResolveUserName(packet.FromUserId);
         var senderSession = EnsureUserSession(packet.FromUserId, sender, "0.0.0.0");
@@ -925,17 +1099,34 @@ public sealed partial class MainWindowViewModel : ViewModelBase
             TransferTime = DateTimeOffset.Now
         });
 
+        if (_settings.SaveChatHistory && isImage)
+        {
+            await _chatHistoryService.SaveMessageAsync(CreateImageChatMessage(
+                request.FileId,
+                request.SenderId,
+                new FileInfo(savePath),
+                savePath,
+                isMine: false,
+                fileName: request.FileName,
+                fileSize: request.FileSize));
+        }
+
         var fileMessage = new ChatMessageViewModel
         {
             SenderName = sender,
-            Content = "收到文件发送请求，请确认是否接收。",
+            Content = isImage ? string.Empty : "收到文件发送请求，请确认是否接收。",
             TimeText = DateTimeOffset.Now.ToString("HH:mm"),
-            Kind = MessageKind.File,
+            Kind = isImage ? MessageKind.Image : MessageKind.File,
             FileName = request.FileName,
             FileSizeText = FormatFileSize(request.FileSize),
             Progress = 0,
             StatusText = "等待接收确认"
         };
+
+        if (isImage)
+        {
+            fileMessage.SetImagePath(savePath);
+        }
 
         if (SelectedUser?.UserId == request.SenderId)
         {
@@ -947,7 +1138,7 @@ public sealed partial class MainWindowViewModel : ViewModelBase
             RefreshUnreadState();
         }
 
-        UpsertRecentSession(senderSession, $"收到文件：{request.FileName}", moveToTop: true);
+        UpsertRecentSession(senderSession, isImage ? $"[图片] {request.FileName}" : $"收到文件：{request.FileName}", moveToTop: true);
         RefreshUnreadState();
         _incomingFileMessages[request.FileId] = fileMessage;
         _incomingSavePaths[request.FileId] = savePath;
@@ -957,11 +1148,17 @@ public sealed partial class MainWindowViewModel : ViewModelBase
             SenderId = request.SenderId,
             SenderName = sender,
             FileName = request.FileName,
-            FileSizeText = FormatFileSize(request.FileSize)
+            FileSizeText = FormatFileSize(request.FileSize),
+            IsImage = isImage
         };
         IsFileRequestPaneOpen = true;
-        StatusMessage = $"收到 {sender} 的文件请求：{request.FileName}";
-        RequestNotification("收到文件请求", $"{sender} 想发送：{request.FileName}", request.SenderId);
+        StatusMessage = isImage
+            ? $"收到 {sender} 的图片：{request.FileName}"
+            : $"收到 {sender} 的文件请求：{request.FileName}";
+        RequestNotification(
+            isImage ? "收到图片" : "收到文件请求",
+            isImage ? $"{sender} 发来图片：{request.FileName}" : $"{sender} 想发送：{request.FileName}",
+            request.SenderId);
     }
 
     private async Task HandleFileResponseAsync(NetworkPacket packet)
@@ -1569,6 +1766,10 @@ public sealed partial class MainWindowViewModel : ViewModelBase
             {
                 message.Progress = progress;
                 message.StatusText = progress >= 100 ? "接收完成" : $"正在接收 {progress:0}%";
+                if (progress >= 100 && _incomingSavePaths.TryGetValue(fileId, out var savePath))
+                {
+                    message.SetImagePath(savePath);
+                }
             });
         }
 
@@ -1690,7 +1891,7 @@ public sealed partial class MainWindowViewModel : ViewModelBase
 
     private static ChatMessageViewModel ToMessageViewModel(ChatMessage message, string senderName)
     {
-        return new ChatMessageViewModel
+        var viewModel = new ChatMessageViewModel
         {
             SenderName = senderName,
             Content = message.Content,
@@ -1698,6 +1899,21 @@ public sealed partial class MainWindowViewModel : ViewModelBase
             IsMine = message.IsMine,
             Kind = message.Kind
         };
+
+        if (message.Kind != MessageKind.Image)
+        {
+            return viewModel;
+        }
+
+        var image = DeserializeImageMessageContent(message.Content);
+        viewModel.Content = string.Empty;
+        viewModel.FileName = image?.FileName ?? "图片";
+        viewModel.FileSizeText = image is null ? string.Empty : FormatFileSize(image.FileSize);
+        viewModel.StatusText = image is not null && !string.IsNullOrWhiteSpace(image.LocalPath) && File.Exists(image.LocalPath)
+            ? "可预览"
+            : "图片文件不可用";
+        viewModel.SetImagePath(image?.LocalPath);
+        return viewModel;
     }
 
     private string ResolveUserName(string userId)
@@ -1753,6 +1969,105 @@ public sealed partial class MainWindowViewModel : ViewModelBase
         });
 
         return files.Count == 0 ? null : files[0].Path.LocalPath;
+    }
+
+    private static async Task<string?> PickImageAsync()
+    {
+        if (Avalonia.Application.Current?.ApplicationLifetime is not IClassicDesktopStyleApplicationLifetime desktop ||
+            desktop.MainWindow is null)
+        {
+            return null;
+        }
+
+        var imageType = new FilePickerFileType("图片文件")
+        {
+            Patterns = ["*.png", "*.jpg", "*.jpeg", "*.gif", "*.bmp", "*.webp"],
+            MimeTypes = ["image/png", "image/jpeg", "image/gif", "image/bmp", "image/webp"]
+        };
+
+        var files = await desktop.MainWindow.StorageProvider.OpenFilePickerAsync(new FilePickerOpenOptions
+        {
+            Title = "选择要发送的图片",
+            AllowMultiple = false,
+            FileTypeFilter = [imageType, FilePickerFileTypes.All]
+        });
+
+        return files.Count == 0 ? null : files[0].Path.LocalPath;
+    }
+
+    private ChatMessage CreateImageChatMessage(
+        string fileId,
+        string peerUserId,
+        FileInfo fileInfo,
+        string localPath,
+        bool isMine,
+        string? fileName = null,
+        long? fileSize = null)
+    {
+        return new ChatMessage
+        {
+            MessageId = fileId,
+            SessionId = peerUserId,
+            SenderId = isMine ? _settings.UserId : peerUserId,
+            ReceiverId = isMine ? peerUserId : _settings.UserId,
+            Kind = MessageKind.Image,
+            Content = SerializeImageMessageContent(new ImageMessageContent(
+                fileId,
+                fileName ?? fileInfo.Name,
+                fileSize ?? fileInfo.Length,
+                localPath)),
+            SendTime = DateTimeOffset.Now,
+            IsMine = isMine
+        };
+    }
+
+    private static string SerializeImageMessageContent(ImageMessageContent content)
+    {
+        return JsonSerializer.Serialize(content, LanTalkJsonContext.Default.ImageMessageContent);
+    }
+
+    private static ImageMessageContent? DeserializeImageMessageContent(string content)
+    {
+        if (string.IsNullOrWhiteSpace(content))
+        {
+            return null;
+        }
+
+        try
+        {
+            return JsonSerializer.Deserialize(content, LanTalkJsonContext.Default.ImageMessageContent);
+        }
+        catch (JsonException)
+        {
+            return null;
+        }
+    }
+
+    private static bool IsImageFileName(string path)
+    {
+        var extension = Path.GetExtension(path);
+        return extension.Equals(".png", StringComparison.OrdinalIgnoreCase) ||
+            extension.Equals(".jpg", StringComparison.OrdinalIgnoreCase) ||
+            extension.Equals(".jpeg", StringComparison.OrdinalIgnoreCase) ||
+            extension.Equals(".gif", StringComparison.OrdinalIgnoreCase) ||
+            extension.Equals(".bmp", StringComparison.OrdinalIgnoreCase) ||
+            extension.Equals(".webp", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private void UpdatePreviewImageSize()
+    {
+        if (_previewImagePixelWidth <= 0 || _previewImagePixelHeight <= 0)
+        {
+            PreviewImageDisplayWidth = 0;
+            PreviewImageDisplayHeight = 0;
+            return;
+        }
+
+        var baseScale = Math.Min(920d / _previewImagePixelWidth, 560d / _previewImagePixelHeight);
+        baseScale = Math.Min(1, baseScale);
+        var scale = baseScale * PreviewImageZoom;
+        PreviewImageDisplayWidth = Math.Max(120, _previewImagePixelWidth * scale);
+        PreviewImageDisplayHeight = Math.Max(90, _previewImagePixelHeight * scale);
     }
 
     private static string FormatFileSize(long bytes)

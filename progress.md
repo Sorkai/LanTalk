@@ -470,3 +470,24 @@
 - 当前验证：
   - `dotnet build LanTalk.sln -v:minimal`：0 警告，0 错误。
   - `dotnet test LanTalk.sln -v:minimal`：37 个测试全部通过。
+
+### 阶段 17：图片消息、表情与头像
+- **状态：** 已完成。
+- 本轮目标：
+  - 实现图片消息便捷发送，让图片走单独入口而不是混在普通附件中。
+  - 在聊天气泡内展示图片缩略图，并提供大图预览/缩放。
+  - 增加常用表情快捷插入。
+  - 改善联系人头像识别度。
+- 已执行操作：
+  - `MessageKind` 新增 `Image`，`FileTransferRequest` 新增可选 `IsImage` 字段。
+  - 新增 `ImageMessageContent`，用 JSON 元数据保存图片文件名、大小和本地路径，不改 SQLite 表结构。
+  - `MainWindowViewModel` 增加图片选择、发送、接收、历史加载、预览弹层和缩放命令。
+  - 图片消息继续复用现有 TCP 文件传输和接收确认流程。
+  - 输入栏新增表情按钮、图片按钮和常用表情面板。
+  - 新增 `AvatarService`，本机与联系人头像使用昵称首字和稳定色彩。
+  - README、`docs/test-plan.md`、`docs/ui-design.md`、`task_plan.md`、`findings.md` 已同步更新。
+- 验证结果：
+  - `dotnet build LanTalk.sln -v:minimal`：0 警告，0 错误。
+  - 初次 `dotnet test` 失败：新增测试误用了不存在的 `MessageRepository.LoadRecentAsync`。
+  - 修复为 `LoadRecentMessagesAsync` 并合并加密基线后，`dotnet test LanTalk.sln -v:minimal`：37 个测试全部通过。
+  - Debug 启动冒烟：应用运行 12 秒无 stdout/stderr 异常输出，随后主动结束进程。

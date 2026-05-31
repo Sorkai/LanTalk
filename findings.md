@@ -298,6 +298,13 @@
 - 最近会话排序应由真实互动驱动：收到消息、发送消息、选择会话会刷新活跃时间；普通 UDP 心跳/发现刷新不会持续把联系人顶到最前。
 - 多会话切换采用 ViewModel 命令加按钮/快捷键实现，不改变网络层和存储层边界。
 
+## 2026-05-31 图片、表情与头像体验发现
+- 图片消息复用现有 TCP 文件传输通道最稳妥：`FileTransferRequest` 增加可选 `IsImage` 字段，旧客户端缺字段时默认按普通文件处理。
+- 图片聊天历史不需要新增 SQLite 字段：使用 `MessageKind.Image` 和 `ImageMessageContent` JSON 存入 `ChatMessages.Content`，其中包含 `FileId`、文件名、大小和本地路径。
+- 图片缩略图只从本地路径加载；路径失效时显示不可预览状态，不阻塞聊天记录加载。
+- 表情输入保持纯 ViewModel 追加文本，不引入富文本控件或第三方 emoji 库，降低 AOT 和 UI 复杂度。
+- 头像先采用昵称首字和稳定色彩生成，满足列表识别度，不引入头像上传、裁剪或同步协议。
+
 ## 资源
 - `C:\pr\LanTalk\AGENTS.md`：主要 Agent / 项目规则。
 - `C:\pr\LanTalk\lan_talk_codex项目说明文档.md`：项目需求、架构、里程碑、验收要求。

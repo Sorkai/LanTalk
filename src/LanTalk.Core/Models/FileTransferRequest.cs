@@ -6,5 +6,5 @@ public sealed record FileTransferRequest(
     long FileSize,
     string SenderId,
     string ReceiverId,
-    int FilePort);
-
+    int FilePort,
+    bool IsImage = false);

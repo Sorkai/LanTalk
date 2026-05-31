@@ -1,4 +1,6 @@
 using CommunityToolkit.Mvvm.ComponentModel;
+using Avalonia.Media;
+using LanTalk.App.Services;
 using LanTalk.Core.Constants;
 using LanTalk.Core.Enums;
 using LanTalk.Core.Models;
@@ -44,6 +46,10 @@ public sealed partial class OnlineUserViewModel : ViewModelBase
         ? "?"
         : Nickname[..1].ToUpperInvariant();
 
+    public string AvatarText => AvatarService.GetInitial(Nickname);
+
+    public IBrush AvatarBrush => AvatarService.CreateBrush($"{UserId}:{Nickname}");
+
     public string StatusText => Status switch
     {
         UserStatus.Online => "在线",
@@ -58,6 +64,13 @@ public sealed partial class OnlineUserViewModel : ViewModelBase
     partial void OnNicknameChanged(string value)
     {
         OnPropertyChanged(nameof(Initial));
+        OnPropertyChanged(nameof(AvatarText));
+        OnPropertyChanged(nameof(AvatarBrush));
+    }
+
+    partial void OnUserIdChanged(string value)
+    {
+        OnPropertyChanged(nameof(AvatarBrush));
     }
 
     partial void OnDepartmentChanged(string value)

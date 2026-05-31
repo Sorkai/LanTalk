@@ -65,8 +65,8 @@
                             CornerRadius="8"
                             Padding="12">
                         <Grid ColumnDefinitions="44,*,Auto" ColumnSpacing="10">
-                            <Border Width="44" Height="44" CornerRadius="22" Background="{StaticResource LanTalkBlueBrush}">
-                                <TextBlock Text="我"
+                            <Border Width="44" Height="44" CornerRadius="22" Background="{Binding LocalAvatarBrush}">
+                                <TextBlock Text="{Binding LocalAvatarText}"
                                            Foreground="White"
                                            FontSize="16"
                                            FontWeight="SemiBold"
@@ -126,8 +126,8 @@
                                                             Background="{StaticResource LanTalkBlueBrush}"
                                                             CornerRadius="2"
                                                             IsVisible="{Binding IsSelected}"/>
-                                                    <Border Grid.Column="1" Width="36" Height="36" CornerRadius="18" Background="{StaticResource LanTalkAvatarBrush}">
-                                                        <TextBlock Text="{Binding Initial}" Foreground="{StaticResource LanTalkBlueDarkBrush}" FontWeight="SemiBold" HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                                                    <Border Grid.Column="1" Width="36" Height="36" CornerRadius="18" Background="{Binding AvatarBrush}">
+                                                        <TextBlock Text="{Binding AvatarText}" Foreground="White" FontWeight="SemiBold" HorizontalAlignment="Center" VerticalAlignment="Center"/>
                                                     </Border>
                                                     <StackPanel Grid.Column="2" Spacing="2">
                                                         <TextBlock Text="{Binding Nickname}" FontWeight="SemiBold" TextTrimming="CharacterEllipsis"/>
@@ -175,8 +175,8 @@
                                                                             Background="{StaticResource LanTalkBlueBrush}"
                                                                             CornerRadius="2"
                                                                             IsVisible="{Binding IsSelected}"/>
-                                                                    <Border Grid.Column="1" Width="36" Height="36" CornerRadius="18" Background="{StaticResource LanTalkAvatarBrush}">
-                                                                        <TextBlock Text="{Binding Initial}" Foreground="{StaticResource LanTalkBlueDarkBrush}" FontWeight="SemiBold" HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                                                                    <Border Grid.Column="1" Width="36" Height="36" CornerRadius="18" Background="{Binding AvatarBrush}">
+                                                                        <TextBlock Text="{Binding AvatarText}" Foreground="White" FontWeight="SemiBold" HorizontalAlignment="Center" VerticalAlignment="Center"/>
                                                                     </Border>
                                                                     <StackPanel Grid.Column="2" Spacing="2">
                                                                         <TextBlock Text="{Binding Nickname}" FontWeight="SemiBold" TextTrimming="CharacterEllipsis"/>
@@ -211,7 +211,7 @@
                 </Grid>
             </Border>
 
-            <Grid Grid.Column="1" RowDefinitions="72,Auto,*,78">
+            <Grid Grid.Column="1" RowDefinitions="72,Auto,*,Auto,78">
                 <Border Grid.Row="0"
                         Background="{StaticResource LanTalkSurfaceBrush}"
                         BorderBrush="{StaticResource LanTalkBorderBrush}"
@@ -268,7 +268,30 @@
                                         <TextBlock Text="{Binding SenderName}" Classes="caption"/>
                                         <Border Classes="messageBubble messageOther">
                                             <StackPanel Spacing="6">
-                                                <TextBlock Text="{Binding Content}" TextWrapping="Wrap" Foreground="{StaticResource LanTalkTextBrush}"/>
+                                                <TextBlock Text="{Binding Content}" TextWrapping="Wrap" Foreground="{StaticResource LanTalkTextBrush}" IsVisible="{Binding HasContentText}"/>
+                                                <Border Classes="fileCard" IsVisible="{Binding IsImage}">
+                                                    <StackPanel Spacing="8">
+                                                        <Button Padding="0"
+                                                                Background="Transparent"
+                                                                BorderThickness="0"
+                                                                HorizontalAlignment="Left"
+                                                                Command="{Binding $parent[Window].DataContext.OpenImagePreviewCommand}"
+                                                                CommandParameter="{Binding}"
+                                                                IsVisible="{Binding CanPreviewImage}">
+                                                            <Image Source="{Binding ImageSource}"
+                                                                   MaxWidth="260"
+                                                                   MaxHeight="180"
+                                                                   Stretch="Uniform"/>
+                                                        </Button>
+                                                        <TextBlock Text="图片接收后可预览"
+                                                                   Classes="caption"
+                                                                   IsVisible="{Binding CanPreviewImage, Converter={StaticResource InverseBoolConverter}}"/>
+                                                        <TextBlock Text="{Binding FileName}" FontWeight="SemiBold"/>
+                                                        <TextBlock Text="{Binding FileSizeText}" Classes="caption"/>
+                                                        <ProgressBar Minimum="0" Maximum="100" Value="{Binding Progress}"/>
+                                                        <TextBlock Text="{Binding StatusText}" Classes="caption"/>
+                                                    </StackPanel>
+                                                </Border>
                                                 <Border Classes="fileCard" IsVisible="{Binding IsFile}">
                                                     <StackPanel Spacing="6">
                                                         <TextBlock Text="{Binding FileName}" FontWeight="SemiBold"/>
@@ -286,7 +309,31 @@
                                         <TextBlock Text="{Binding SenderName}" Classes="caption" HorizontalAlignment="Right"/>
                                         <Border Classes="messageBubble messageMine">
                                             <StackPanel Spacing="6">
-                                                <TextBlock Text="{Binding Content}" TextWrapping="Wrap" Foreground="White"/>
+                                                <TextBlock Text="{Binding Content}" TextWrapping="Wrap" Foreground="White" IsVisible="{Binding HasContentText}"/>
+                                                <Border Classes="fileCard" IsVisible="{Binding IsImage}">
+                                                    <StackPanel Spacing="8">
+                                                        <Button Padding="0"
+                                                                Background="Transparent"
+                                                                BorderThickness="0"
+                                                                HorizontalAlignment="Left"
+                                                                Command="{Binding $parent[Window].DataContext.OpenImagePreviewCommand}"
+                                                                CommandParameter="{Binding}"
+                                                                IsVisible="{Binding CanPreviewImage}">
+                                                            <Image Source="{Binding ImageSource}"
+                                                                   MaxWidth="260"
+                                                                   MaxHeight="180"
+                                                                   Stretch="Uniform"/>
+                                                        </Button>
+                                                        <TextBlock Text="图片文件不可用"
+                                                                   Foreground="#DCEEFF"
+                                                                   FontSize="12"
+                                                                   IsVisible="{Binding CanPreviewImage, Converter={StaticResource InverseBoolConverter}}"/>
+                                                        <TextBlock Text="{Binding FileName}" FontWeight="SemiBold" Foreground="White"/>
+                                                        <TextBlock Text="{Binding FileSizeText}" Foreground="#DCEEFF" FontSize="12"/>
+                                                        <ProgressBar Minimum="0" Maximum="100" Value="{Binding Progress}"/>
+                                                        <TextBlock Text="{Binding StatusText}" Foreground="#DCEEFF" FontSize="12"/>
+                                                    </StackPanel>
+                                                </Border>
                                                 <Border Classes="fileCard" IsVisible="{Binding IsFile}">
                                                     <StackPanel Spacing="6">
                                                         <TextBlock Text="{Binding FileName}" FontWeight="SemiBold"/>
@@ -306,22 +353,58 @@
                 </ScrollViewer>
 
                 <Border Grid.Row="3"
+                        IsVisible="{Binding IsEmojiPickerOpen}"
+                        Background="{StaticResource LanTalkSurfaceBrush}"
+                        BorderBrush="{StaticResource LanTalkBorderBrush}"
+                        BorderThickness="0,1,0,0"
+                        Padding="18,10">
+                    <ItemsControl ItemsSource="{Binding CommonEmojis}">
+                        <ItemsControl.ItemsPanel>
+                            <ItemsPanelTemplate>
+                                <WrapPanel/>
+                            </ItemsPanelTemplate>
+                        </ItemsControl.ItemsPanel>
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate>
+                                <Button Width="36"
+                                        Height="32"
+                                        Padding="0"
+                                        FontSize="18"
+                                        Content="{Binding}"
+                                        Command="{Binding $parent[Window].DataContext.InsertEmojiCommand}"
+                                        CommandParameter="{Binding}"/>
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+                </Border>
+
+                <Border Grid.Row="4"
                         Background="{StaticResource LanTalkSurfaceBrush}"
                         BorderBrush="{StaticResource LanTalkBorderBrush}"
                         BorderThickness="0,1,0,0"
                         Padding="18,12">
-                    <Grid ColumnDefinitions="Auto,*,Auto" ColumnSpacing="10">
+                    <Grid ColumnDefinitions="Auto,Auto,Auto,*,Auto" ColumnSpacing="10">
                         <Button Classes="icon"
+                                Content="😊"
+                                ToolTip.Tip="表情"
+                                Command="{Binding ToggleEmojiPickerCommand}"/>
+                        <Button Grid.Column="1"
+                                Classes="icon"
+                                Content="🖼"
+                                ToolTip.Tip="发送图片"
+                                Command="{Binding AttachImageCommand}"/>
+                        <Button Classes="icon"
+                                Grid.Column="2"
                                 Content="📎"
                                 ToolTip.Tip="发送文件"
                                 Command="{Binding AttachFileCommand}"/>
-                        <TextBox Grid.Column="1"
+                        <TextBox Grid.Column="3"
                                  MinHeight="42"
                                  CornerRadius="8"
                                  PlaceholderText="输入消息"
                                  Text="{Binding DraftMessage}"
                                  AcceptsReturn="True"/>
-                        <Button Grid.Column="2"
+                        <Button Grid.Column="4"
                                 Classes="primary"
                                 Content="发送"
                                 Command="{Binding SendMessageCommand}"/>
@@ -462,7 +545,7 @@
                         Padding="22"
                         BoxShadow="0 8 22 0 #33000000">
                     <StackPanel Spacing="14">
-                        <TextBlock Text="接收文件" Classes="title"/>
+                        <TextBlock Text="{Binding PendingFileRequest.Title}" Classes="title"/>
                         <TextBlock Text="{Binding PendingFileRequest.SenderName, StringFormat='来自：{0}'}"/>
                         <Border Classes="fileCard">
                             <StackPanel Spacing="6">
@@ -470,7 +553,7 @@
                                 <TextBlock Text="{Binding PendingFileRequest.FileSizeText}" Classes="caption"/>
                             </StackPanel>
                         </Border>
-                        <TextBlock Text="文件会保存到设置中的文件接收目录。"
+                        <TextBlock Text="{Binding PendingFileRequest.Description}"
                                    Classes="caption"
                                    TextWrapping="Wrap"/>
                         <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Spacing="10">
@@ -478,6 +561,45 @@
                             <Button Classes="primary" Content="接收" Command="{Binding AcceptFileRequestCommand}"/>
                         </StackPanel>
                     </StackPanel>
+                </Border>
+            </Border>
+
+            <Border Grid.ColumnSpan="2"
+                    IsVisible="{Binding IsImagePreviewOpen}"
+                    Background="#CC000000">
+                <Border Width="980"
+                        Height="680"
+                        HorizontalAlignment="Center"
+                        VerticalAlignment="Center"
+                        Background="{StaticResource LanTalkSurfaceBrush}"
+                        CornerRadius="8"
+                        Padding="18"
+                        BoxShadow="0 8 22 0 #33000000">
+                    <Grid RowDefinitions="Auto,*,Auto" RowSpacing="12">
+                        <Grid ColumnDefinitions="*,Auto">
+                            <TextBlock Text="{Binding PreviewImageTitle}" Classes="title" TextTrimming="CharacterEllipsis"/>
+                            <Button Grid.Column="1" Content="关闭" Command="{Binding CloseImagePreviewCommand}"/>
+                        </Grid>
+
+                        <ScrollViewer Grid.Row="1"
+                                      HorizontalScrollBarVisibility="Auto"
+                                      VerticalScrollBarVisibility="Auto"
+                                      Background="{StaticResource LanTalkChatBrush}">
+                            <Border HorizontalAlignment="Center" VerticalAlignment="Center" Padding="18">
+                                <Image Source="{Binding PreviewImageSource}"
+                                       Width="{Binding PreviewImageDisplayWidth}"
+                                       Height="{Binding PreviewImageDisplayHeight}"
+                                       Stretch="Uniform"/>
+                            </Border>
+                        </ScrollViewer>
+
+                        <StackPanel Grid.Row="2" Orientation="Horizontal" HorizontalAlignment="Center" Spacing="10">
+                            <Button Content="缩小" Command="{Binding ZoomOutImagePreviewCommand}"/>
+                            <TextBlock Text="{Binding PreviewImageZoomText}" VerticalAlignment="Center"/>
+                            <Button Content="放大" Command="{Binding ZoomInImagePreviewCommand}"/>
+                            <Button Content="原始" Command="{Binding ResetImagePreviewZoomCommand}"/>
+                        </StackPanel>
+                    </Grid>
                 </Border>
             </Border>
         </Grid>

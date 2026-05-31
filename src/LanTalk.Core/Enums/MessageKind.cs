@@ -4,7 +4,7 @@ public enum MessageKind
 {
     Private,
     Broadcast,
+    Image,
     File,
     System
 }
-
